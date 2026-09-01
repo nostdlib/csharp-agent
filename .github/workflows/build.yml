@@ -44,17 +44,16 @@ jobs:
           $arches = @(@('i386','x86'), @('x86_64','x64'), @('aarch64','ARM64'))
           New-Item -ItemType Directory -Force dist | Out-Null
           foreach ($s in $sides) {
-            # net2 resolves via the installed .NET 3.5 feature; net4 via the NuGet
-            # reference assemblies above. MSBuild reads properties from env vars.
+            # net2 resolves via the installed .NET 3.5 feature; net4 imports the
+            # package's own targets (sets TargetFrameworkRootPath + mscorlib refs).
+            $extra = ''
             if ($s[0] -eq 'net4') {
               $pkg = Get-ChildItem refasms -Directory -Filter 'Microsoft.NetFramework.ReferenceAssemblies.net40*' | Select-Object -First 1
-              $env:TargetFrameworkRootPath = "$($pkg.FullName)\build\.NETFramework"
-            } else {
-              Remove-Item Env:TargetFrameworkRootPath -ErrorAction SilentlyContinue
+              $extra = "-p:CustomAfterMicrosoftCommonTargets=$($pkg.FullName)\build\Microsoft.NETFramework.ReferenceAssemblies.net40.targets"
             }
             foreach ($a in $arches) {
               msbuild csharp-agent.csproj -restore `
-                -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
+                -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) $extra `
                 -nologo -verbosity:minimal
               if ($LASTEXITCODE -ne 0) { exit 1 }
               Copy-Item "bin\$($a[1])\Release\csharp-agent.dll" "dist\csharp-agent-$($s[0])-$($a[0]).dll"
