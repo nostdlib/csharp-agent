@@ -1,0 +1,27 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (Release, net2.0)
+        run: >
+          msbuild csharp-agent.csproj
+          /p:Configuration=Release /p:Platform=AnyCPU
+          /nologo /verbosity:minimal
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: csharp-agent
+          path: |
+            bin/Release/csharp-agent.dll
+            bin/Release/csharp-agent.b64.txt
+          if-no-files-found: error
