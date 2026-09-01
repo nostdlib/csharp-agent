@@ -69,9 +69,7 @@ Identical to the jscript-agent's contract (spoken against the HTTP relay's root)
 
 ## Build
 
-Old-style csproj targeting .NET Framework 2.0 (compilable by any VS 2017+ / Build Tools msbuild;
-the C2 compiles the merged sources in-browser with Roslyn against net20/net40 reference
-assemblies, ignoring this file):
+Old-style csproj targeting .NET Framework 2.0 (compilable by any VS 2017+ / Build Tools msbuild):
 
 ```
 msbuild csharp-agent.csproj /p:Configuration=Release
@@ -79,6 +77,15 @@ msbuild csharp-agent.csproj /p:Configuration=Release
 
 The post-build step emits `bin/Release/csharp-agent.b64.txt` (base64 of the DLL) for ad-hoc
 testing of the deserialization chain.
+
+## Releases
+
+CI builds the DLL and publishes it — the C2 consumes the **binary**, not the source: its
+Agents-table **CSharp-Agent** row points at the rolling prerelease asset
+`releases/download/preview/csharp-agent.dll`, fetched via the relay `/proxy` or directly,
+parsed with dnlib (entry detection + identifier obfuscation) and embedded into the
+deserialization blob. Every push to `main` recreates the `preview` prerelease (`build.yml`);
+pushing a `v*` tag publishes a stable release (`release.yml`).
 
 ## License
 
