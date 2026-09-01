@@ -25,6 +25,15 @@ jobs:
           DISM /Online /Enable-Feature /FeatureName:NetFx3 /All /NoRestart | Out-Null
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # The runner has no v4.0 targeting pack (only 4.8), and retargeting to 4.8
+      # would drop targets on older 4.x runtimes — so feed MSBuild the official
+      # v4.0 reference assemblies from NuGet instead.
+      - name: Fetch v4.0 reference assemblies
+        run: |
+          nuget install Microsoft.NetFramework.ReferenceAssemblies.net40 -Version 1.0.3 `
+            -OutputDirectory refasms -NonInteractive
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       # One image per (arch × CLR side) — the Assets-table rows resolve on
       # windows + netframework2/netframework4 + i386/x86_64/aarch64, so the asset
       # names carry the same vocabulary: csharp-agent-<side>-<arch>.dll.
@@ -35,6 +44,14 @@ jobs:
           $arches = @(@('i386','x86'), @('x86_64','x64'), @('aarch64','ARM64'))
           New-Item -ItemType Directory -Force dist | Out-Null
           foreach ($s in $sides) {
+            # net2 resolves via the installed .NET 3.5 feature; net4 via the NuGet
+            # reference assemblies above. MSBuild reads properties from env vars.
+            if ($s[0] -eq 'net4') {
+              $pkg = Get-ChildItem refasms -Directory -Filter 'Microsoft.NetFramework.ReferenceAssemblies.net40*' | Select-Object -First 1
+              $env:TargetFrameworkRootPath = "$($pkg.FullName)\build\.NETFramework"
+            } else {
+              Remove-Item Env:TargetFrameworkRootPath -ErrorAction SilentlyContinue
+            }
             foreach ($a in $arches) {
               msbuild csharp-agent.csproj -restore `
                 -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
