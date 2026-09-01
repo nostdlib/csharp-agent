@@ -13,6 +13,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # msbuild is not on PATH under `shell: powershell` — this action adds it.
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      # The runner image has no .NET 3.5 feature, hence no v2.0 targeting pack (MSB3644).
+      - name: Install .NET Framework 3.5 targeting pack (for the net2 side)
+        run: |
+          DISM /Online /Enable-Feature /FeatureName:NetFx3ServerFeatures /All /NoRestart | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          DISM /Online /Enable-Feature /FeatureName:NetFx3 /All /NoRestart | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       # One image per (arch × CLR side) — the Assets-table rows resolve on
       # windows + netframework2/netframework4 + i386/x86_64/aarch64, so the asset
       # names carry the same vocabulary: csharp-agent-<side>-<arch>.dll.
@@ -24,7 +36,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           foreach ($s in $sides) {
             foreach ($a in $arches) {
-              msbuild csharp-agent.csproj `
+              msbuild csharp-agent.csproj -restore `
                 -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
                 -nologo -verbosity:minimal
               if ($LASTEXITCODE -ne 0) { exit 1 }
