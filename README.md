@@ -80,12 +80,15 @@ testing of the deserialization chain.
 
 ## Releases
 
-CI builds the DLL and publishes it — the C2 consumes the **binary**, not the source: its
-Agents-table **CSharp-Agent** row points at the rolling prerelease asset
-`releases/download/preview/csharp-agent.dll`, fetched via the relay `/proxy` or directly,
-parsed with dnlib (entry detection + identifier obfuscation) and embedded into the
-deserialization blob. Every push to `main` recreates the `preview` prerelease (`build.yml`);
-pushing a `v*` tag publishes a stable release (`release.yml`).
+CI builds **one image per (arch × CLR side)** and publishes the binaries — the C2 consumes
+the **binaries**, not the source: its Agents-table **CSharp-Agent** rows (one per arch ×
+framework tag) point at the rolling prerelease assets
+`releases/download/preview/csharp-agent-<net2|net4>-<i386|x86_64|aarch64>.dll`, fetched via
+the relay `/proxy` or directly, parsed with dnlib (entry detection + identifier
+obfuscation) and embedded into the deserialization blob. The Upgrade window picks the row
+by the gadget's framework tag + the target's process arch; the Persistence Manager takes
+the CLR-4 side for its arch. Every push to `main` recreates the `preview` prerelease
+(`build.yml`); pushing a `v*` tag publishes a stable release (`release.yml`).
 
 ## License
 

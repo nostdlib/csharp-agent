@@ -19,19 +19,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build (Release, net2.0)
-        run: >
-          msbuild csharp-agent.csproj
-          -p:Configuration=Release -p:Platform=AnyCPU
-          -nologo -verbosity:minimal
+      # One image per (arch × CLR side) — asset names carry the Agents-table tag vocabulary:
+      # csharp-agent-<net2|net4>-<i386|x86_64|aarch64>.dll (same loop as build.yml).
+      - name: Build all six images (Release)
+        shell: powershell
+        run: |
+          $sides  = @(@('net2','v2.0'), @('net4','v4.0'))
+          $arches = @(@('i386','x86'), @('x86_64','x64'), @('aarch64','ARM64'))
+          New-Item -ItemType Directory -Force dist | Out-Null
+          foreach ($s in $sides) {
+            foreach ($a in $arches) {
+              msbuild csharp-agent.csproj `
+                -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
+                -nologo -verbosity:minimal
+              if ($LASTEXITCODE -ne 0) { exit 1 }
+              Copy-Item "bin\$($a[1])\Release\csharp-agent.dll" "dist\csharp-agent-$($s[0])-$($a[0]).dll"
+            }
+          }
+          Get-ChildItem dist
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-csharp-agent
-          path: |
-            bin/Release/csharp-agent.dll
-            bin/Release/csharp-agent.b64.txt
+          path: dist/*.dll
           if-no-files-found: error
 
   release:
