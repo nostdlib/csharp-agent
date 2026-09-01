@@ -17,19 +17,16 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # The runner image has no .NET 3.5 feature, hence no v2.0 targeting pack (MSB3644).
-      - name: Install .NET Framework 3.5 targeting pack (for the net2 side)
+      # The runner has neither a v2.0 nor a v4.0 targeting pack (only 4.8), and
+      # retargeting to 4.8 would drop targets on older 4.x runtimes. The v2.0
+      # runtime-dir fallback also references an AMD64 mscorlib, which MSB3270-flags
+      # on the aarch64 image — the NuGet reference assemblies are arch-neutral and
+      # fix both sides the same way.
+      - name: Fetch reference assemblies (net20 + net40)
         run: |
-          DISM /Online /Enable-Feature /FeatureName:NetFx3ServerFeatures /All /NoRestart | Out-Null
+          nuget install Microsoft.NetFramework.ReferenceAssemblies.net20 -Version 1.0.3 `
+            -OutputDirectory refasms -NonInteractive
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          DISM /Online /Enable-Feature /FeatureName:NetFx3 /All /NoRestart | Out-Null
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-
-      # The runner has no v4.0 targeting pack (only 4.8), and retargeting to 4.8
-      # would drop targets on older 4.x runtimes — so feed MSBuild the official
-      # v4.0 reference assemblies from NuGet instead.
-      - name: Fetch v4.0 reference assemblies
-        run: |
           nuget install Microsoft.NetFramework.ReferenceAssemblies.net40 -Version 1.0.3 `
             -OutputDirectory refasms -NonInteractive
           if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -44,13 +41,10 @@ jobs:
           $arches = @(@('i386','x86'), @('x86_64','x64'), @('aarch64','ARM64'))
           New-Item -ItemType Directory -Force dist | Out-Null
           foreach ($s in $sides) {
-            # net2 resolves via the installed .NET 3.5 feature; net4 imports the
-            # package's own targets (sets TargetFrameworkRootPath + mscorlib refs).
-            $extra = ''
-            if ($s[0] -eq 'net4') {
-              $pkg = Get-ChildItem refasms -Directory -Filter 'Microsoft.NetFramework.ReferenceAssemblies.net40*' | Select-Object -First 1
-              $extra = "-p:CustomAfterMicrosoftCommonTargets=$($pkg.FullName)\build\Microsoft.NETFramework.ReferenceAssemblies.net40.targets"
-            }
+            # Import the matching package's own targets for each side (sets
+            # TargetFrameworkRootPath + the mscorlib reference correctly).
+            $pkg = Get-ChildItem refasms -Directory -Filter "Microsoft.NetFramework.ReferenceAssemblies.$($s[0])*" | Select-Object -First 1
+            $extra = "-p:CustomAfterMicrosoftCommonTargets=$($pkg.FullName)\build\Microsoft.NETFramework.ReferenceAssemblies.$($s[0]).targets"
             foreach ($a in $arches) {
               msbuild csharp-agent.csproj -restore `
                 -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) $extra `
