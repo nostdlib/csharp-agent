@@ -8,14 +8,16 @@ on:
 jobs:
   build:
     runs-on: windows-2022
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
       - name: Build (Release, net2.0)
         run: >
           msbuild csharp-agent.csproj
-          /p:Configuration=Release /p:Platform=AnyCPU
-          /nologo /verbosity:minimal
+          -p:Configuration=Release -p:Platform=AnyCPU
+          -nologo -verbosity:minimal
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -25,3 +27,14 @@ jobs:
             bin/Release/csharp-agent.dll
             bin/Release/csharp-agent.b64.txt
           if-no-files-found: error
+
+      # Rolling "preview" prerelease — the URL the C2's Agents-table CSharp-Agent row
+      # points at (releases/download/preview/csharp-agent.dll), same mechanism as the
+      # Position-Independent-Agent and jscript-agent repos. Recreated on every main push.
+      - name: Publish rolling preview release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete preview --yes --cleanup-tag 2>$null; if ($LASTEXITCODE -ne 0) { echo "no previous preview release" }
+          gh release create preview --prerelease --title preview --generate-notes bin/Release/csharp-agent.dll bin/Release/csharp-agent.b64.txt
