@@ -44,11 +44,12 @@ jobs:
             # Import the matching package's own targets for each side (sets
             # TargetFrameworkRootPath + the mscorlib reference correctly).
             $pkg = Get-ChildItem refasms -Directory -Filter "Microsoft.NetFramework.ReferenceAssemblies.$($s[0])*" | Select-Object -First 1
-            $extra = "-p:CustomAfterMicrosoftCommonTargets=$($pkg.FullName)\build\Microsoft.NETFramework.ReferenceAssemblies.$($s[0]).targets"
+            $targets = "$($pkg.FullName)\build\Microsoft.NETFramework.ReferenceAssemblies.$($s[0]).targets"
+            if (-not (Test-Path $targets)) { Write-Error "missing $targets"; exit 1 }
             foreach ($a in $arches) {
               msbuild csharp-agent.csproj -restore `
-                -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) $extra `
-                -nologo -verbosity:minimal
+                -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
+                -nologo -verbosity:minimal "-p:CustomAfterMicrosoftCommonTargets=$targets"
               if ($LASTEXITCODE -ne 0) { exit 1 }
               Copy-Item "bin\$($a[1])\Release\csharp-agent.dll" "dist\csharp-agent-$($s[0])-$($a[0]).dll"
             }
