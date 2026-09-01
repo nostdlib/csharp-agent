@@ -1,11 +1,11 @@
 # csharp-agent
 
-The C# HTTP-beacon agent for the [C2](https://github.com/mrzaxaryan/C2) platform — the successor of
+The C# HTTP-beacon agent for the [C2](https://github.com/nostdlib) platform — the successor of
 `CSharpShellcodeInjector`. It is a .NET Framework **2.0** class library (single `System` reference,
 no LINQ, no unsafe code) whose COM-visible entry (`Program`, fired from its static constructor)
 loads via the C2's insecure-deserialization chain, then turns the host process into an implant
 that speaks the SAME beacon protocol as the
-[jscript-agent](https://github.com/mrzaxaryan/jscript-agent).
+[jscript-agent](https://github.com/nostdlib/jscript-agent).
 
 The infection chain it sits in:
 
