@@ -8,7 +8,7 @@ namespace CSharpAgent
     // ships, so an upgrade takeover keeps ONE stable agent row: the UUID is the same MachineGuid
     // the JScript agent reads, and every field is derived the same way. The differences from
     // the JScript agent are exactly two: X-Agent-Name-Id is 2 (this breed) and
-    // X-Agent-Capabilities carries ONLY the NativeUpgrade bit (category 4 → 1000000000000000).
+    // X-Agent-Capabilities carries ONLY the UpgradeNative bit (category 4 → 1000000000000000).
     internal static class Identity
     {
         internal const string Capabilities = "1000000000000000";

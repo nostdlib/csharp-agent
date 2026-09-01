@@ -10,7 +10,7 @@ that speaks the SAME beacon protocol as the
 The infection chain it sits in:
 
 ```
-JScript stager → (0x0B Upgrade, deserialization) → csharp-agent → (0x0C NativeUpgrade, injection) → PIC WebSocket agent
+JScript stager → (0x0B UpgradeNetFramework, deserialization) → csharp-agent → (0x0C UpgradeNative, injection) → PIC WebSocket agent
 ```
 
 ## Environment contract
@@ -21,20 +21,20 @@ the mode:
 | Variable | Meaning |
 |---|---|
 | `H_URL` | The beacon endpoint — the HTTP relay root (`https://<relay>/`). Set ⇒ agent mode: the beacon loop parks the loading thread forever (see Host contract). |
-| `A_URL` | The direct download URL of the PIC agent bytes to inject — the `0x0C` NativeUpgrade command carries only env lines, so the agent ALWAYS downloads the bytes from `A_URL` at runtime; when `H_URL` is absent it also drives the legacy one-shot path (the Persistence Manager's on-logon flow). |
+| `A_URL` | The direct download URL of the PIC agent bytes to inject — the `0x0C` UpgradeNative command carries only env lines, so the agent ALWAYS downloads the bytes from `A_URL` at runtime; when `H_URL` is absent it also drives the legacy one-shot path (the Persistence Manager's on-logon flow). |
 
 `W_URL` (the relay the injected WebSocket agent connects back to) is read by the INJECTED agent
 from the process environment — the `0x0C` payload's env lines set it.
 
 `X-Agent-Capabilities` always ships `1000000000000000` — exactly ONE capability,
-**NativeUpgrade** (category 4). `X-Agent-Name-Id` is `2` (this breed; the JScript agent is `1`).
+**UpgradeNative** (category 4). `X-Agent-Name-Id` is `2` (this breed; the JScript agent is `1`).
 
 ## Host contract
 
 The entry never exits the process on its own:
 
 - **Agent mode is a blocking takeover.** The beacon loop runs ON the thread that deserialized the
-  assembly and never returns on its own. The JScript agent whose `0x0B` Upgrade loaded us stays
+  assembly and never returns on its own. The JScript agent whose `0x0B` UpgradeNetFramework loaded us stays
   parked inside its dispatch — so exactly ONE agent beacons the shared MachineGuid session. When
   the beacon fails fatally, `Run` returns and the JScript agent underneath resumes beaconing as a
   fallback.
@@ -42,7 +42,7 @@ The entry never exits the process on its own:
   response FIFO; the FIRST beacon POST carries `00000000` (u32 status 0 — chain completed), so
   the C2's delivery task observes success the moment the agent comes up. An unsolicited response
   body is dropped by the relay, so this is harmless for non-upgrade starts.
-- **The injected agent rides the same process.** `NativeUpgrade` injects the delivered PIC (embedded in the command, or downloaded from `A_URL` on the legacy path) into
+- **The injected agent rides the same process.** `UpgradeNative` injects the delivered PIC (embedded in the command, or downloaded from `A_URL` on the legacy path) into
   the current process; the agent therefore STAYS resident afterwards (exiting would kill the
   injected agent). `Exit` (`0x0A`) is the explicit operator terminate: it kills the host process
   and everything in it.
@@ -63,8 +63,8 @@ Identical to the jscript-agent's contract (spoken against the HTTP relay's root)
 | Opcode | Command | Behavior |
 |---|---|---|
 | `0x0A` | Exit | Kills the host process (and any agent injected into it). No reply. |
-| `0x0B` | Upgrade | Replies status `2` (the deserialization upgrade is the JScript agent's — this breed is already native). |
-| `0x0C` | NativeUpgrade | Payload after the opcode: `NAME=value` env lines (same env-line style as the `0x0B` headers). `A_URL` names the PIC bytes to download (`C2Payload`) and `W_URL` the relay the injected WebSocket agent reads from the process env. Replies u32 as hex: `0` = injected, `1` = failed / nothing to inject. |
+| `0x0B` | UpgradeNetFramework | Replies status `2` (the deserialization upgrade is the JScript agent's — this breed is already native). |
+| `0x0C` | UpgradeNative | Payload after the opcode: `NAME=value` env lines (same env-line style as the `0x0B` headers). `A_URL` names the PIC bytes to download (`C2Payload`) and `W_URL` the relay the injected WebSocket agent reads from the process env. Replies u32 as hex: `0` = injected, `1` = failed / nothing to inject. |
 | other | unknown | Replies u32 `2`. |
 
 ## Build
@@ -85,7 +85,7 @@ the **binaries**, not the source: its Agents-table **CSharp-Agent** rows (one pe
 framework tag) point at the rolling prerelease assets
 `releases/download/preview/csharp-agent-<net2|net4>-<i386|x86_64|aarch64>.dll`, fetched via
 the relay `/proxy` or directly, parsed with dnlib (entry detection + identifier
-obfuscation) and embedded into the deserialization blob. The Upgrade window picks the row
+obfuscation) and embedded into the deserialization blob. The UpgradeNetFramework window picks the row
 by the gadget's framework tag + the target's process arch; the Persistence Manager takes
 the CLR-4 side for its arch. Every push to `main` recreates the `preview` prerelease
 (`build.yml`); pushing a `v*` tag publishes a stable release (`release.yml`).

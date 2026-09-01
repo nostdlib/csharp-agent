@@ -51,7 +51,7 @@ than opening a public issue.
 The following are considered in scope for security reports:
 
 - The beacon protocol implementation (malformed-command handling, response encoding)
-- The NativeUpgrade payload parsing (env-line parsing, env-var application, download and inject path)
+- The UpgradeNative payload parsing (env-line parsing, env-var application, download and inject path)
 - Identity derivation issues (accidental information disclosure beyond the documented header set)
 - The TEB-walk injection path's memory handling
 

