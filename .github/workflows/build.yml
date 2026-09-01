@@ -43,9 +43,10 @@ jobs:
           foreach ($s in $sides) {
             # Import the matching package's own targets for each side (sets
             # TargetFrameworkRootPath + the mscorlib reference correctly).
-            $pkg = Get-ChildItem refasms -Directory -Filter "Microsoft.NetFramework.ReferenceAssemblies.$($s[0])*" | Select-Object -First 1
-            $targets = "$($pkg.FullName)\build\Microsoft.NETFramework.ReferenceAssemblies.$($s[0]).targets"
-            if (-not (Test-Path $targets)) { Write-Error "missing $targets"; exit 1 }
+            $pkg = Get-ChildItem refasms -Directory -Filter "Microsoft.NetFramework.ReferenceAssemblies.$($s[0])0*" | Select-Object -First 1
+            $targets = Get-ChildItem "$($pkg.FullName)\build" -Filter '*.targets' | Select-Object -First 1
+            if (-not $targets) { Write-Error "no .targets under $($pkg.FullName)\build"; exit 1 }
+            $targets = $targets.FullName
             foreach ($a in $arches) {
               msbuild csharp-agent.csproj -restore `
                 -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
