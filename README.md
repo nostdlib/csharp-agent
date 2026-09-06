@@ -51,6 +51,12 @@ The entry never exits the process on its own:
 
 Identical to the jscript-agent's contract (spoken against the HTTP relay's root):
 
+- **`X-Agent-Machine-Uuid` derives the canonical per-machine value**: the `MachineGuid` from the
+  **32-bit registry view** (`RRF_SUBKEY_WOW6432KEY` — the Wow6432Node copy on 64-bit hosts,
+  which is the only view the x86-re-hosted JScript breed can reach), falling back to the SMBIOS
+  type-1 UUID (byte-identical to `Win32_ComputerSystemProduct.UUID`), omitted when neither
+  resolves. The assembly's OWN host bitness never picks the view — a 64-bit host reading the
+  native copy would mint a second agent row on the same target.
 - **POST** to `H_URL` with the full `X-Agent-*` identity set (API 1) on every request; body =
   hex(previous command's response), empty body when none is pending.
 - Every successful answer is `200 text/plain`: body = hex(next command) in the shared binary

