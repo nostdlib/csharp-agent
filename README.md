@@ -26,8 +26,8 @@ the mode:
 `W_URL` (the relay the injected WebSocket agent connects back to) is read by the INJECTED agent
 from the process environment — the `0x0C` payload's env lines set it.
 
-`X-Agent-Capabilities` always ships `1000000000000000` — exactly ONE capability,
-**UpgradeNative** (category 4). `X-Agent-Name-Id` is `2` (this breed; the JScript agent is `1`).
+`X-Client-Features` always ships `1000000000000000` — exactly ONE capability,
+**UpgradeNative** (category 4). `X-Client-Id` is `2` (this breed; the JScript agent is `1`).
 
 ## Host contract
 
@@ -51,18 +51,18 @@ The entry never exits the process on its own:
 
 Identical to the jscript-agent's contract (spoken against the HTTP relay's root):
 
-- **`X-Agent-Machine-Uuid` derives the canonical per-machine value**: the `MachineGuid` from the
+- **`X-Device-Id` derives the canonical per-machine value**: the `MachineGuid` from the
   **32-bit registry view** (`RRF_SUBKEY_WOW6432KEY` — the Wow6432Node copy on 64-bit hosts,
   which is the only view the x86-re-hosted JScript breed can reach), falling back to the SMBIOS
   type-1 UUID (byte-identical to `Win32_ComputerSystemProduct.UUID`), omitted when neither
   resolves. The assembly's OWN host bitness never picks the view — a 64-bit host reading the
   native copy would mint a second agent row on the same target.
-- **`X-Agent-Session-Key` is a random per-RUNTIME GUID** (`Guid.NewGuid()`, generated once per
+- **`X-Session-Id` is a random per-RUNTIME GUID** (`Guid.NewGuid()`, generated once per
   process): NOT identity — rows/queues stay keyed by the machine uuid — but a fresh value each
   launch lets the operator tell concurrent or succeeding runtimes on one machine apart (after a
   `0x0B` handover the same machine uuid's beacons carry OUR new key, making the JS→C# takeover
   visible in the C2's info panel).
-- **POST** to `H_URL` with the full `X-Agent-*` identity set (API 1) on every request; body =
+- **POST** to `H_URL` with the full identity header set (API 1) on every request; body =
   hex(previous command's response), empty body when none is pending.
 - Every successful answer is `200 text/plain`: body = hex(next command) in the shared binary
   protocol (`[opcode][payload]`), empty body = nothing queued (re-POST immediately). Any non-200
