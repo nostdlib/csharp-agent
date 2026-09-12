@@ -22,15 +22,18 @@ namespace CSharpAgent
             }
         }
 
-        // TLS 1.2 first — modern hosts/CDNs (GitHub releases) refuse anything older, and the
-        // int-cast form works on CLR 2.0 where SecurityProtocolType.Tls12 doesn't exist. Old
-        // schannel stacks reject the value — swallowed, and the request proceeds with whatever
-        // the OS allows. WebClient honors the system (WinInet) proxy and follows redirects.
+        // ADD Tls12 to the OS-default protocol mask — never REPLACE it: the old Tls12-only
+        // assignment bricked stock Win7 (its schannel predates TLS 1.2), while |= keeps
+        // Win10/11 negotiating 1.2 and lets Win7 fall back to the legacy TLS the relay edge
+        // still accepts. The int-cast form works on CLR 2.0 where SecurityProtocolType.Tls12
+        // doesn't exist; stacks that reject the value throw — swallowed, and the request
+        // proceeds with whatever the OS allows. WebClient honors the system (WinInet) proxy
+        // and follows redirects.
         static byte[] Download(string url)
         {
             try
             {
-                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
             }
             catch { }
 

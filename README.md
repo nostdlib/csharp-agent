@@ -36,8 +36,11 @@ The entry never exits the process on its own:
 - **Agent mode is a blocking takeover.** The beacon loop runs ON the thread that deserialized the
   assembly and never returns on its own. The JScript agent whose `0x0B` UpgradeNetFramework loaded us stays
   parked inside its dispatch — so exactly ONE agent beacons the shared MachineGuid session. When
-  the beacon fails fatally, `Run` returns and the JScript agent underneath resumes beaconing as a
-  fallback.
+  the beacon fails fatally AFTER the first successful POST, `Run` returns and the JScript agent
+  underneath resumes beaconing as a fallback (the completed status already went out honestly —
+  the agent WAS up). A failure on the FIRST POST instead throws: presence was never established,
+  the exception unwinds the deserialization, and the JScript agent's `0x0B` handler reports
+  status 1 (failed) — never the false status 0 a quiet return would produce.
 - **Owed first reply.** The `0x0B` command that loaded us parked a requester on the relay's
   response FIFO; the FIRST beacon POST carries `00000000` (u32 status 0 — chain completed), so
   the C2's delivery task observes success the moment the agent comes up. An unsolicited response
@@ -64,6 +67,11 @@ Identical to the jscript-agent's contract (spoken against the HTTP relay's root)
   visible in the C2's info panel).
 - **POST** to `H_URL` with the full identity header set (API 1) on every request; body =
   hex(previous command's response), empty body when none is pending.
+- **TLS**: `ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072` (the int-cast
+  form — `Tls12` doesn't exist on CLR 2.0) ADDS TLS 1.2 to the OS-default mask, never replaces
+  it: Win10/11 keep negotiating 1.2 while stock Win7 falls back to its legacy TLS, which the
+  relay edge accepts. A Tls12-ONLY mask bricks Win7 — the HTTPS connect dies before the first
+  POST. The A_URL download in `C2Payload` applies the same rule.
 - Every successful answer is `200 text/plain`: body = hex(next command) in the shared binary
   protocol (`[opcode][payload]`), empty body = nothing queued (re-POST immediately). Any non-200
   or transport failure is fatal — the loop unwinds, no retry.
