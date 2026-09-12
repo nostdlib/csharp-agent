@@ -31,11 +31,7 @@ namespace CSharpAgent
         // and follows redirects.
         static byte[] Download(string url)
         {
-            try
-            {
-                ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
-            }
-            catch { }
+
 
             WebClient client = new WebClient();
             return client.DownloadData(url);

