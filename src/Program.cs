@@ -32,12 +32,6 @@ namespace CSharpAgent
 
         static void Main()
         {
-            try
-            {
-                ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
-            }
-            catch { }
-
             var beaconUrl = Environment.GetEnvironmentVariable("H_URL");
             if (string.IsNullOrEmpty(beaconUrl))
             {

