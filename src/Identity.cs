@@ -88,14 +88,19 @@ namespace CSharpAgent
                 omitted.Add(headers[i][0]);
                 headers.RemoveAt(i);
             }
+#if DEBUG
             LastCleaningNote = omitted.Count == 0
                 ? ""
                 : "OMITTED — wire-unsafe chars: " + string.Join(", ", omitted.ToArray());
+#endif
             return headers.ToArray();
         }
 
-        /// <summary>What the last Build() had to omit, "" when nothing — diag-only.</summary>
+#if DEBUG
+        /// <summary>What the last Build() had to omit, "" when nothing — diag-only (the
+        /// omission itself runs in every config; only this report is compiled out).</summary>
         internal static string LastCleaningNote = "";
+#endif
 
         /// <summary>True when every char survives CLR2's header-value check: its low byte
         /// must not be a control char (tab excepted) or DEL. Exact CLR2 rule — see the

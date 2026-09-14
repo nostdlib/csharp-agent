@@ -116,11 +116,16 @@ guarded `Main` — run it directly with `H_URL`/`A_URL` in the environment (e.g.
 `set H_URL=https://<relay>/ && csharp-agent-net2-i386.exe`) to isolate the beacon/transport
 from the delivery chain. The panel never fetches these; its rows name the `.dll` assets.
 
-**Diagnostic build warning:** the current tree pops a numbered MessageBox (`c2 diag [1]
-start` … `[exit] …`) on every startup, command and fatal-exit path — `src/Diag.cs` — to
-trace silent start-and-exit runs by hand (Win7 hunt). Popups block, so healthy idle beacon
-iterations stay silent; the LAST caption a run shows marks where it died. Strip `Diag.cs`
-and its call sites before shipping to a real target.
+**Debug vs release:** the rolling `preview` release ships BOTH flavors per side × arch.
+The plain assets (`csharp-agent-<side>-<arch>.{dll,exe}` — the names the C2 panel fetches)
+have **no diagnostics compiled in at all**: every `Diag.*` call site is wrapped in
+`#if DEBUG`, so a release binary carries no log strings and writes no file. The `-debug`
+assets (`csharp-agent-<side>-<arch>-debug.{dll,exe}`) append one line per step to
+`csharp-agent-debug-<pid>.log` next to the exe — or in `%TEMP%` when the assembly was
+loaded from bytes (the 0x0B deserialization path). Lines flush immediately, so the last
+line on disk after a crash names the killer. Vocabulary: `[1]–[9]` beacon lifecycle,
+`[exit] …` fatal branches, `[cmd] 0x…` delivered commands, `[inj n]` inject steps
+(`[inj 8] entry` = the last line before a native payload crash).
 
 ## License
 

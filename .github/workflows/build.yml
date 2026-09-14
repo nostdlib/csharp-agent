@@ -64,6 +64,23 @@ jobs:
                 -nologo -verbosity:minimal "-p:CustomAfterMicrosoftCommonTargets=$targets"
               if ($LASTEXITCODE -ne 0) { exit 1 }
               Copy-Item "bin\$($a[1])\Release-exe\csharp-agent.exe" "dist\csharp-agent-$($s[0])-$($a[0]).exe"
+              # DEBUG flavor (-debug suffix): the #if DEBUG file-logger (src/Diag.cs) compiles
+              # in ONLY here — one line per lifecycle/inject step to
+              # csharp-agent-debug-<pid>.log next to the exe (or %TEMP% for the bytes-loaded
+              # 0x0B dll). The plain assets above have NO diagnostics compiled in at all.
+              # Separate OutputPaths again — IncrementalClean eats prior outputs in shared dirs.
+              msbuild csharp-agent.csproj `
+                -p:Configuration=Debug -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
+                "-p:OutputPath=bin\$($a[1])\Debug-dist\" `
+                -nologo -verbosity:minimal "-p:CustomAfterMicrosoftCommonTargets=$targets"
+              if ($LASTEXITCODE -ne 0) { exit 1 }
+              Copy-Item "bin\$($a[1])\Debug-dist\csharp-agent.dll" "dist\csharp-agent-$($s[0])-$($a[0])-debug.dll"
+              msbuild csharp-agent.csproj `
+                -p:Configuration=Debug -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
+                -p:OutputType=exe "-p:OutputPath=bin\$($a[1])\Debug-dist-exe\" `
+                -nologo -verbosity:minimal "-p:CustomAfterMicrosoftCommonTargets=$targets"
+              if ($LASTEXITCODE -ne 0) { exit 1 }
+              Copy-Item "bin\$($a[1])\Debug-dist-exe\csharp-agent.exe" "dist\csharp-agent-$($s[0])-$($a[0])-debug.exe"
             }
           }
           Get-ChildItem dist
