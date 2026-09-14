@@ -119,13 +119,13 @@ from the delivery chain. The panel never fetches these; its rows name the `.dll`
 **Debug vs release:** the rolling `preview` release ships BOTH flavors per side × arch.
 The plain assets (`csharp-agent-<side>-<arch>.{dll,exe}` — the names the C2 panel fetches)
 have **no diagnostics compiled in at all**: every `Diag.*` call site is wrapped in
-`#if DEBUG`, so a release binary carries no log strings and writes no file. The `-debug`
-assets (`csharp-agent-<side>-<arch>-debug.{dll,exe}`) append one line per step to
-`csharp-agent-debug-<pid>.log` next to the exe — or in `%TEMP%` when the assembly was
-loaded from bytes (the 0x0B deserialization path). Lines flush immediately, so the last
-line on disk after a crash names the killer. Vocabulary: `[1]–[9]` beacon lifecycle,
-`[exit] …` fatal branches, `[cmd] 0x…` delivered commands, `[inj n]` inject steps
-(`[inj 8] entry` = the last line before a native payload crash).
+`#if DEBUG`, so a release binary carries no diag strings, no user32 bind, nothing to
+strip. The `-debug` assets (`csharp-agent-<side>-<arch>-debug.{dll,exe}`) pop a blocking
+MessageBox on every decision/exit path — the LAST caption that appeared marks how far the
+agent got; the step AFTER it is the one that died or quit. Vocabulary: `[1]–[9]` beacon
+lifecycle, `[exit] …` fatal branches, `[cmd] 0x…` delivered commands, `[inj n]` inject
+steps (`[inj 8] entry` = the last caption before a native payload crash). Ship `-debug`
+only to a box you are debugging by hand — the popups are operator-visible by design.
 
 ## License
 
