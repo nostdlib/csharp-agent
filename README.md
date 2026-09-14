@@ -116,6 +116,12 @@ guarded `Main` — run it directly with `H_URL`/`A_URL` in the environment (e.g.
 `set H_URL=https://<relay>/ && csharp-agent-net2-i386.exe`) to isolate the beacon/transport
 from the delivery chain. The panel never fetches these; its rows name the `.dll` assets.
 
+**Diagnostic build warning:** the current tree pops a numbered MessageBox (`c2 diag [1]
+start` … `[exit] …`) on every startup, command and fatal-exit path — `src/Diag.cs` — to
+trace silent start-and-exit runs by hand (Win7 hunt). Popups block, so healthy idle beacon
+iterations stay silent; the LAST caption a run shows marks where it died. Strip `Diag.cs`
+and its call sites before shipping to a real target.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Usage is governed by [RESPONSIBLE_USE.md](RESPONSIBLE_USE.md) and
