@@ -65,44 +65,49 @@ namespace CSharpAgent
             AddOptional(headers, "X-OS-Version", version);
             AddOptional(headers, "X-OS-Build", BuildNumber(version));
 
-            // SANITIZE BEFORE THE WIRE — HttpWebRequest.Headers.Add THROWS ArgumentException
-            // ("value contained invalid control characters", param "value") on any value char
-            // < 0x20 (tab aside) or 0x7F. The diagnostic run on the Win7 box died exactly
-            // there, on POST #1, before a single byte hit the network — a localized/OEM box
-            // can return such bytes from MachineName/UserName. The JScript agent never sees
-            // this: WinHttpRequest.SetRequestHeader validates nothing, so the same dirty
-            // bytes ride ITS beacons fine. Keep exactly printable ASCII and drop the rest —
-            // X-Device-Id/X-Session-Id are hex+dash and never touched; the cleanable fields
-            // (X-Device-Name, X-User-Id) are display metadata, not identity. Whatever had to
-            // go is reported through LastCleaningNote so the diag popup names the culprit.
-            var cleaned = new List<string>();
-            for (var i = 0; i < headers.Count; i++)
+            // SANITIZE BEFORE THE WIRE — CLR2's WebHeaderCollection.Add rejects any value
+            // char whose LOW BYTE is a control char or DEL: b = c & 0xFF is fatal when
+            // (b < 0x20 && b != tab) || b == 0x7F. Swept empirically across the whole BMP on
+            // 2.0.50727 — this exact rule, zero mismatches: Cyrillic А-П (U+0410-U+041F,
+            // low bytes 0x10-0x1F) THROW "value contains invalid control characters" while
+            // а-я pass; U+200B throws; U+0080-U+009F pass. A localized box whose machine or
+            // user name carries such letters died on POST #1 before a byte hit the network —
+            // the Win7 hunt threw the SAME popup twice because the first sanitizer kept
+            // Cyrillic. CLR4 only rejects real control chars, so this stricter rule is safe
+            // on both sides. A value that needs ANY cleaning is garbage for the wire: the
+            // OPTIONAL header is OMITTED entirely (never half-stripped — "not reported"
+            // beats a mangled name). X-Device-Id/X-Session-Id are hex+dash and can never
+            // bite; the fields that can (X-Device-Name, X-User-Id) are display metadata,
+            // not identity — the row stays keyed by X-Device-Id. The JScript agent never
+            // hits this: WinHttpRequest.SetRequestHeader validates nothing, so its Cyrillic
+            // names ride fine and the row keeps showing them after a takeover.
+            var omitted = new List<string>();
+            for (var i = headers.Count - 1; i >= 0; i--)
             {
-                var safe = HeaderSafe(headers[i][1]);
-                if (safe != headers[i][1])
-                {
-                    cleaned.Add(headers[i][0] + " dropped " + (headers[i][1].Length - safe.Length) + " bad char(s)");
-                    headers[i] = new[] { headers[i][0], safe };
-                }
+                if (WireSafe(headers[i][1])) continue;
+                omitted.Add(headers[i][0]);
+                headers.RemoveAt(i);
             }
-            LastCleaningNote = cleaned.Count == 0 ? "" : "sanitized: " + string.Join(", ", cleaned.ToArray());
+            LastCleaningNote = omitted.Count == 0
+                ? ""
+                : "OMITTED — wire-unsafe chars: " + string.Join(", ", omitted.ToArray());
             return headers.ToArray();
         }
 
-        /// <summary>What the last Build() had to strip, "" when nothing — diag-only.</summary>
+        /// <summary>What the last Build() had to omit, "" when nothing — diag-only.</summary>
         internal static string LastCleaningNote = "";
 
-        /// <summary>Keeps exactly the printable-ASCII range HttpWebRequest accepts
-        /// (0x20–0x7E); everything else — control chars, DEL, high/OEM bytes — is dropped.</summary>
-        private static string HeaderSafe(string value)
+        /// <summary>True when every char survives CLR2's header-value check: its low byte
+        /// must not be a control char (tab excepted) or DEL. Exact CLR2 rule — see the
+        /// comment at the call site.</summary>
+        private static bool WireSafe(string value)
         {
-            var clean = "";
             for (var i = 0; i < value.Length; i++)
             {
-                var c = value[i];
-                if (c >= 0x20 && c != 0x7F) clean += c;
+                var b = value[i] & 0xFF;
+                if ((b < 0x20 && b != 0x09) || b == 0x7F) return false;
             }
-            return clean;
+            return true;
         }
 
         /// <summary>Appends an OPTIONAL identity header only when its detection produced a

