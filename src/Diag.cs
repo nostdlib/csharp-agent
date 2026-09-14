@@ -45,5 +45,11 @@ namespace CSharpAgent
             }
             return text;
         }
+
+        // "0x…" hex for a native pointer/NTSTATUS — the inject-step popups print addresses.
+        internal static string Hex(IntPtr p)
+        {
+            return "0x" + p.ToInt64().ToString("X");
+        }
     }
 }
