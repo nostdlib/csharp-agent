@@ -56,12 +56,14 @@ jobs:
               # Same image as a self-running EXE sibling: the runtime entry rides the same
               # guarded Main the deserialization ctor calls — run it directly with
               # H_URL/A_URL in the environment (isolates transport from the JS chain).
+              # Separate OutputPath: sharing bin\$(Platform)\Release would let the exe
+              # pass's IncrementalClean delete the just-copied dll as a stale output.
               msbuild csharp-agent.csproj `
                 -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
-                -p:OutputType=exe `
+                -p:OutputType=exe "-p:OutputPath=bin\$($a[1])\Release-exe\" `
                 -nologo -verbosity:minimal "-p:CustomAfterMicrosoftCommonTargets=$targets"
               if ($LASTEXITCODE -ne 0) { exit 1 }
-              Copy-Item "bin\$($a[1])\Release\csharp-agent.exe" "dist\csharp-agent-$($s[0])-$($a[0]).exe"
+              Copy-Item "bin\$($a[1])\Release-exe\csharp-agent.exe" "dist\csharp-agent-$($s[0])-$($a[0]).exe"
             }
           }
           Get-ChildItem dist

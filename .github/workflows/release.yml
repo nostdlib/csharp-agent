@@ -56,13 +56,14 @@ jobs:
                 -nologo -verbosity:minimal "-p:CustomAfterMicrosoftCommonTargets=$targets"
               if ($LASTEXITCODE -ne 0) { exit 1 }
               Copy-Item "bin\$($a[1])\Release\csharp-agent.dll" "dist\csharp-agent-$($s[0])-$($a[0]).dll"
-              # Same image as a self-running EXE sibling (same guarded Main — see build.yml).
+              # Same image as a self-running EXE sibling (same guarded Main — see build.yml);
+              # separate OutputPath so IncrementalClean can't eat the dll (see build.yml).
               msbuild csharp-agent.csproj `
                 -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
-                -p:OutputType=exe `
+                -p:OutputType=exe "-p:OutputPath=bin\$($a[1])\Release-exe\" `
                 -nologo -verbosity:minimal "-p:CustomAfterMicrosoftCommonTargets=$targets"
               if ($LASTEXITCODE -ne 0) { exit 1 }
-              Copy-Item "bin\$($a[1])\Release\csharp-agent.exe" "dist\csharp-agent-$($s[0])-$($a[0]).exe"
+              Copy-Item "bin\$($a[1])\Release-exe\csharp-agent.exe" "dist\csharp-agent-$($s[0])-$($a[0]).exe"
             }
           }
           Get-ChildItem dist
