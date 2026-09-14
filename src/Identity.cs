@@ -64,7 +64,45 @@ namespace CSharpAgent
             AddOptional(headers, "X-App-Arch", processArch);
             AddOptional(headers, "X-OS-Version", version);
             AddOptional(headers, "X-OS-Build", BuildNumber(version));
+
+            // SANITIZE BEFORE THE WIRE — HttpWebRequest.Headers.Add THROWS ArgumentException
+            // ("value contained invalid control characters", param "value") on any value char
+            // < 0x20 (tab aside) or 0x7F. The diagnostic run on the Win7 box died exactly
+            // there, on POST #1, before a single byte hit the network — a localized/OEM box
+            // can return such bytes from MachineName/UserName. The JScript agent never sees
+            // this: WinHttpRequest.SetRequestHeader validates nothing, so the same dirty
+            // bytes ride ITS beacons fine. Keep exactly printable ASCII and drop the rest —
+            // X-Device-Id/X-Session-Id are hex+dash and never touched; the cleanable fields
+            // (X-Device-Name, X-User-Id) are display metadata, not identity. Whatever had to
+            // go is reported through LastCleaningNote so the diag popup names the culprit.
+            var cleaned = new List<string>();
+            for (var i = 0; i < headers.Count; i++)
+            {
+                var safe = HeaderSafe(headers[i][1]);
+                if (safe != headers[i][1])
+                {
+                    cleaned.Add(headers[i][0] + " dropped " + (headers[i][1].Length - safe.Length) + " bad char(s)");
+                    headers[i] = new[] { headers[i][0], safe };
+                }
+            }
+            LastCleaningNote = cleaned.Count == 0 ? "" : "sanitized: " + string.Join(", ", cleaned.ToArray());
             return headers.ToArray();
+        }
+
+        /// <summary>What the last Build() had to strip, "" when nothing — diag-only.</summary>
+        internal static string LastCleaningNote = "";
+
+        /// <summary>Keeps exactly the printable-ASCII range HttpWebRequest accepts
+        /// (0x20–0x7E); everything else — control chars, DEL, high/OEM bytes — is dropped.</summary>
+        private static string HeaderSafe(string value)
+        {
+            var clean = "";
+            for (var i = 0; i < value.Length; i++)
+            {
+                var c = value[i];
+                if (c >= 0x20 && c != 0x7F) clean += c;
+            }
+            return clean;
         }
 
         /// <summary>Appends an OPTIONAL identity header only when its detection produced a
