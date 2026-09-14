@@ -19,8 +19,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # msbuild is not on PATH under `shell: powershell` — this action adds it.
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      # The runner has neither a v2.0 nor a v4.0 targeting pack (only 4.8) — same reason
+      # build.yml pulls these; without them the net2 side cannot resolve at all.
+      - name: Fetch reference assemblies (net20 + net40)
+        run: |
+          nuget install Microsoft.NetFramework.ReferenceAssemblies.net20 -Version 1.0.3 `
+            -OutputDirectory refasms -NonInteractive
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          nuget install Microsoft.NetFramework.ReferenceAssemblies.net40 -Version 1.0.3 `
+            -OutputDirectory refasms -NonInteractive
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       # One image per (arch × CLR side) — asset names carry the Agents-table tag vocabulary:
-      # csharp-agent-<net2|net4>-<i386|x86_64|aarch64>.dll (same loop as build.yml).
+      # csharp-agent-<net2|net4>-<i386|x86_64|aarch64>.dll (+ .exe siblings, same loop as
+      # build.yml).
       - name: Build all six images (Release)
         shell: powershell
         run: |
@@ -28,12 +44,25 @@ jobs:
           $arches = @(@('i386','x86'), @('x86_64','x64'), @('aarch64','ARM64'))
           New-Item -ItemType Directory -Force dist | Out-Null
           foreach ($s in $sides) {
+            # Import the matching package's own targets for each side (sets
+            # TargetFrameworkRootPath + the mscorlib reference correctly).
+            $pkg = Get-ChildItem refasms -Directory -Filter "Microsoft.NetFramework.ReferenceAssemblies.$($s[0])0*" | Select-Object -First 1
+            $targets = Get-ChildItem "$($pkg.FullName)\build" -Filter '*.targets' | Select-Object -First 1
+            if (-not $targets) { Write-Error "no .targets under $($pkg.FullName)\build"; exit 1 }
+            $targets = $targets.FullName
             foreach ($a in $arches) {
-              msbuild csharp-agent.csproj `
+              msbuild csharp-agent.csproj -restore `
                 -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
-                -nologo -verbosity:minimal
+                -nologo -verbosity:minimal "-p:CustomAfterMicrosoftCommonTargets=$targets"
               if ($LASTEXITCODE -ne 0) { exit 1 }
               Copy-Item "bin\$($a[1])\Release\csharp-agent.dll" "dist\csharp-agent-$($s[0])-$($a[0]).dll"
+              # Same image as a self-running EXE sibling (same guarded Main — see build.yml).
+              msbuild csharp-agent.csproj `
+                -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
+                -p:OutputType=exe `
+                -nologo -verbosity:minimal "-p:CustomAfterMicrosoftCommonTargets=$targets"
+              if ($LASTEXITCODE -ne 0) { exit 1 }
+              Copy-Item "bin\$($a[1])\Release\csharp-agent.exe" "dist\csharp-agent-$($s[0])-$($a[0]).exe"
             }
           }
           Get-ChildItem dist

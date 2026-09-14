@@ -95,8 +95,10 @@
     <Compile Include="src\C2Payload.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <!-- DLL builds only: the ad-hoc deserialization-test artifact must stay the DLL's base64,
+       not get clobbered by the OutputType=exe rebuild pass (build.yml builds both). -->
   <PropertyGroup>
-    <PostBuildEvent>powershell -Command "[Convert]::ToBase64String((Get-Content '$(TargetPath)' -Encoding Byte)) | Out-File '$(TargetDir)$(TargetName).b64.txt'"
+    <PostBuildEvent Condition=" '$(OutputType)' == 'Library' ">powershell -Command "[Convert]::ToBase64String((Get-Content '$(TargetPath)' -Encoding Byte)) | Out-File '$(TargetDir)$(TargetName).b64.txt'"
     </PostBuildEvent>
   </PropertyGroup>
 </Project>

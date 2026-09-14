@@ -53,6 +53,15 @@ jobs:
                 -nologo -verbosity:minimal "-p:CustomAfterMicrosoftCommonTargets=$targets"
               if ($LASTEXITCODE -ne 0) { exit 1 }
               Copy-Item "bin\$($a[1])\Release\csharp-agent.dll" "dist\csharp-agent-$($s[0])-$($a[0]).dll"
+              # Same image as a self-running EXE sibling: the runtime entry rides the same
+              # guarded Main the deserialization ctor calls — run it directly with
+              # H_URL/A_URL in the environment (isolates transport from the JS chain).
+              msbuild csharp-agent.csproj `
+                -p:Configuration=Release -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
+                -p:OutputType=exe `
+                -nologo -verbosity:minimal "-p:CustomAfterMicrosoftCommonTargets=$targets"
+              if ($LASTEXITCODE -ne 0) { exit 1 }
+              Copy-Item "bin\$($a[1])\Release\csharp-agent.exe" "dist\csharp-agent-$($s[0])-$($a[0]).exe"
             }
           }
           Get-ChildItem dist
