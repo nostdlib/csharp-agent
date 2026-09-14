@@ -29,7 +29,7 @@ namespace CSharpAgent
             // uses for the A_URL download). Old schannel stacks reject the value — swallowed.
             try
             {
-                ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
+                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
             }
             catch { }
             try { ServicePointManager.Expect100Continue = false; }
