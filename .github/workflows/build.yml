@@ -42,7 +42,7 @@ jobs:
           # Plain builds land in dist\, debug flavor in dist-debug\ — the debug assets
           # carry the SAME names as the plain ones (flavor = the release tag, not the
           # filename), so sharing one dir would overwrite the release build.
-          New-Item -ItemType Directory -Force dist dist-debug | Out-Null
+          New-Item -ItemType Directory -Force dist, dist-debug | Out-Null
           foreach ($s in $sides) {
             # Import the matching package's own targets for each side (sets
             # TargetFrameworkRootPath + the mscorlib reference correctly).
