@@ -6,7 +6,7 @@ namespace CSharpAgent
 #if DEBUG
     // DEBUG-ONLY DIAGNOSTICS — the whole type is compiled out of every Release build
     // (#if DEBUG; every call site is guarded too), so no popup captions, no user32 bind,
-    // nothing diag-shaped survives there. Debug builds (-debug assets) surface a blocking
+    // nothing diag-shaped survives there. Debug builds (the debug-release assets) surface a blocking
     // MessageBox on EVERY decision/exit path — the LAST caption that appeared marks how
     // far the agent got; the step AFTER it is the one that died or the branch that quit.
     // The beacon loop stays SILENT on healthy idle iterations (an empty-body 200 is the
