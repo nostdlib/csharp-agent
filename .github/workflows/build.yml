@@ -92,13 +92,26 @@ jobs:
           path: dist/*.dll
           if-no-files-found: error
 
-      # Rolling "preview" prerelease — the URLs the C2's Agents-table CSharp-Agent rows
-      # point at (releases/download/preview/csharp-agent-<side>-<arch>.dll), same mechanism
-      # as the Position-Independent-Agent and jscript-agent repos. Recreated on every main push.
-      - name: Publish rolling preview release
+      # Two rolling prereleases, recreated on every main push — the URLs the C2's
+      # Agents-table rows point at:
+      #   release  → the PLAIN assets only (csharp-agent-<side>-<arch>.{dll,exe}) — the
+      #              flavor the CSharp-Agent rows fetch: zero diagnostics compiled in.
+      #   debug    → the -debug siblings — the MessageBox-per-step flavor, hand-debugging
+      #              only (the DEBUG-CSharp-Agent row + manual exe runs).
+      - name: Publish rolling release (plain assets)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete preview --yes --cleanup-tag 2>$null; if ($LASTEXITCODE -ne 0) { echo "no previous preview release" }
-          gh release create preview --prerelease --title preview --generate-notes dist/*
+          gh release delete release --yes --cleanup-tag 2>$null; if ($LASTEXITCODE -ne 0) { echo "no previous release" }
+          $plain = (Get-ChildItem dist -File | Where-Object { $_.Name -notlike '*-debug.*' }).FullName
+          gh release create release --prerelease --title release --generate-notes $plain
+
+      - name: Publish rolling debug (debug assets)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete debug --yes --cleanup-tag 2>$null; if ($LASTEXITCODE -ne 0) { echo "no previous debug release" }
+          $dbg = (Get-ChildItem dist -File | Where-Object { $_.Name -like '*-debug.*' }).FullName
+          gh release create debug --prerelease --title debug --generate-notes $dbg
