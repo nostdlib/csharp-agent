@@ -217,7 +217,10 @@ namespace CSharpAgent
                 try
                 {
                     var binLen = command.Length >= 9 ? BitConverter.ToInt32(command, 5) : 0;
-                    if (binLen <= 0 || 9 + binLen > command.Length)
+                    // Widen before comparing: 9 + binLen wraps negative near int.MaxValue and
+                    // slips past this guard (the same CWE-190 shape as ParseFrames below) —
+                    // contained here only because Dispatch's try catches the failed allocation.
+                    if (binLen <= 0 || 9 + (long)binLen > command.Length)
                     {
 #if DEBUG
                         Diag.Show("[exit] 0x0C", "bad or missing payload length — replying status 1 (nothing to inject)");
@@ -332,7 +335,11 @@ namespace CSharpAgent
                 if (offset + 4 > body.Length) return null;
                 var length = BitConverter.ToInt32(body, offset);
                 offset += 4;
-                if (length < 0 || offset + length > body.Length) return null;
+                // Long sum: the int addition wraps negative for lengths near int.MaxValue,
+                // passing this check; the oversized new byte[length] below then throws
+                // OUTSIDE any try and kills the process instead of the contract's clean
+                // fatal (proven live: a 4-byte FF FF FF 7F body crashed the agent).
+                if (length < 0 || (long)offset + length > body.Length) return null;
                 var frame = new byte[length];
                 Buffer.BlockCopy(body, offset, frame, 0, length);
                 frames.Add(frame);
