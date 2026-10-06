@@ -284,6 +284,10 @@ namespace CSharpAgent
             var request = (HttpWebRequest)WebRequest.Create(url);
             request.Method = "POST";
             request.ContentType = "application/octet-stream";
+            // The contract makes ANY non-200 fatal, but HttpWebRequest silently follows
+            // redirects by default — a 302 to a live URL reads as a clean 200 and the
+            // fatal never fires (observed live: the agent beaconed on through it).
+            request.AllowAutoRedirect = false;
             // The relay holds each request 20–30 s server-side; keep generous headroom over
             // that window (the JScript agent's receive timeout is 45 s for the same reason).
             request.Timeout = 60000;
