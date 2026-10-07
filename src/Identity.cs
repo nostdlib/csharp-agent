@@ -58,8 +58,23 @@ namespace CSharpAgent
             };
             AddOptional(headers, "X-Device-Id", guid);
             AddOptional(headers, "X-Session-Id", SessionKey);
-            AddOptional(headers, "X-Device-Name", Environment.MachineName);
-            AddOptional(headers, "X-User-Id", Environment.UserName);
+            // The last two probes were the only unguarded calls in Build: Environment
+            // .MachineName can throw (unreadable NetBIOS name) and UserName rides the same
+            // native query — a throw here unwinds Run → Main → the cctor, where the cached
+            // TypeInitializationException kills the type for the process lifetime (and the
+            // exe entry dies before any console unwind). Same not-death discipline as every
+            // other probe in this file: failure omits the header — these are display
+            // metadata, the row stays keyed by X-Device-Id.
+            var deviceName = "";
+            var userName = "";
+            try
+            {
+                deviceName = Environment.MachineName;
+                userName = Environment.UserName;
+            }
+            catch { }
+            AddOptional(headers, "X-Device-Name", deviceName);
+            AddOptional(headers, "X-User-Id", userName);
             AddOptional(headers, "X-Device-Arch", machineArch);
             AddOptional(headers, "X-App-Arch", processArch);
             AddOptional(headers, "X-OS-Version", version);
