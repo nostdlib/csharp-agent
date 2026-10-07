@@ -4,14 +4,6 @@ using System.Runtime.InteropServices;
 namespace CSharpAgent
 {
     [StructLayout(LayoutKind.Sequential)]
-    internal struct Parameters
-    {
-        public uint InjectorVersion;
-        public uint InjectorCompilationType;
-        public IntPtr DllPath;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
     internal struct SYSTEM_INFO
     {
         public ushort wProcessorArchitecture;

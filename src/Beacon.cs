@@ -398,9 +398,5 @@ namespace CSharpAgent
             return true;
         }
 
-        private static byte[] U32Bytes(uint n)
-        {
-            return new[] { (byte)(n & 255), (byte)((n >> 8) & 255), (byte)((n >> 16) & 255), (byte)((n >> 24) & 255) };
-        }
     }
 }
