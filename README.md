@@ -90,7 +90,7 @@ Identical to the jscript-agent's contract (spoken against the HTTP relay's root)
 |---|---|---|
 | `0x0A` | Exit | Kills the host process (and any agent injected into it). No reply. |
 | `0x0B` | UpgradeNetFramework | Replies status `2` (the deserialization upgrade is the JScript agent's — this breed is already native). |
-| `0x0C` | UpgradeNative | Payload after the opcode: `[binLen:u32le][PIC binary][NAME=value env lines]` (same env-line style as the `0x0B` headers). The PIC bytes ride the command; `W_URL` (the relay the injected WebSocket agent reads from the process env) is the only current env line. Replies `[status][corrId]`: `0` = injected, `1` = failed / nothing to inject. |
+| `0x0C` | UpgradeNative | Payload after the opcode: `[binLen:u32le][PIC binary][NAME=value env lines]` (same env-line style as the `0x0B` headers). The PIC bytes ride the command; `W_URL` (the relay the injected WebSocket agent reads from the process env) is the only current env line. Replies `[status][corrId]`: `1` = failed / nothing to inject (a pre-injection failure — bad payload length, or an exception in the injection steps). A SUCCESSFUL injection sends NO reply: the PIC entry point never returns (every path ends in ExitProcess), so the C2's wait for a 0x0C status times out and success is observed by the WebSocket agent appearing on the relay; a `0` is reachable only from payloads that return (lab stubs). |
 | other | unknown | Replies u32 `2`. |
 
 ## Build
