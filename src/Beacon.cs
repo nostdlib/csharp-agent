@@ -130,6 +130,10 @@ namespace CSharpAgent
 #if DEBUG
                     Diag.Show("[exit] malformed", "response body is not a valid [u32le len][bytes] frame stream — fatal");
 #endif
+                    // Same death-notice ship as the non-200 fatal above: a malformed body
+                    // was the one fatal path that died silently — the operator saw the
+                    // agent vanish with no "beacon failed" line at all.
+                    Log("beacon failed — malformed response body");
                     return; // malformed body — fatal, same as a bad status
                 }
                 if (frames.Count == 0) continue;
