@@ -40,19 +40,21 @@ The entry never exits the process on its own:
   parked inside its dispatch — so exactly ONE agent beacons the shared MachineGuid session. When
   the beacon fails fatally AFTER the first successful POST, `Run` returns and the JScript agent
   underneath resumes beaconing as a fallback (the completed status already went out honestly —
-  the agent WAS up). A failure on the FIRST POST instead throws: presence was never established,
-  the exception unwinds the deserialization, and the JScript agent's `0x0B` handler reports
-  status 1 (failed) — never the false status 0 a quiet return would produce.
+  the agent WAS up). A failure on the FIRST POST takes the same quiet fatal: presence was
+  never established and the owed reply never ships — the C2's delivery task sees no status
+  at all (neither a false 0 nor a 1; its wait simply times out), and re-delivery of the
+  upgrade remains the recovery path.
 - **Owed first reply.** The `0x0B` command that loaded us parked a requester on the relay's
-  response FIFO; the FIRST beacon POST carries `00000000` (u32 status 0 — chain completed), so
-  the C2's delivery task observes success the moment the agent comes up. An unsolicited response
+  response FIFO; the FIRST beacon POST carries an 8-byte reply frame — status 0, corrId 0
+  (chain completed; id 0 = unmatched) — inside the standard length prefix, so the C2's
+  delivery task observes success the moment the agent comes up. An unsolicited response
   body is dropped by the relay, so this is harmless for non-upgrade starts.
 - **The injected agent rides the same process.** `UpgradeNative` injects the delivered PIC (embedded in the command) into
   the current process; the agent therefore STAYS resident afterwards (exiting would kill the
   injected agent). `Exit` (`0x0A`) is the explicit operator terminate: it kills the host process
   and everything in it.
 
-## Beacon contract (v2)
+## Beacon contract (v3)
 
 Identical to the jscript-agent's contract (spoken against the HTTP relay's root):
 
@@ -67,16 +69,19 @@ Identical to the jscript-agent's contract (spoken against the HTTP relay's root)
   launch lets the operator tell concurrent or succeeding runtimes on one machine apart (after a
   `0x0B` handover the same machine uuid's beacons carry OUR new key, making the JS→C# takeover
   visible in the C2's info panel).
-- **POST** to `H_URL` with the full identity header set (API 1) on every request; body =
-  hex(previous command's response), empty body when none is pending.
+- **POST** to `H_URL` with the full identity header set (API 1) on every request. Bodies are
+  binary frame streams on both sides — a frame is `[u32le length][bytes]`, a body is
+  consecutive frames. The request body carries every reply owed since the last POST
+  (a reply frame is `[status:u32le][corrId:u32le]`), empty when none is pending.
 - **TLS**: `ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072` (the int-cast
   form — `Tls12` doesn't exist on CLR 2.0) ADDS TLS 1.2 to the OS-default mask, never replaces
   it: Win10/11 keep negotiating 1.2 while stock Win7 falls back to its legacy TLS, which the
   relay edge accepts. A Tls12-ONLY mask bricks Win7 — the HTTPS connect dies before the first
   POST.
-- Every successful answer is `200 text/plain`: body = hex(next command) in the shared binary
-  protocol (`[opcode][payload]`), empty body = nothing queued (re-POST immediately). Any non-200
-  or transport failure is fatal — the loop unwinds, no retry.
+- Every successful answer is a `200` whose body is the same frame stream of queued commands —
+  a command frame is `[opcode:byte][corrId:u32le][payload]`, batched up to 32 frames / 4 MiB;
+  an empty body = nothing queued (re-POST immediately). Any non-200 or transport failure
+  (a redirect included — auto-follow is disabled) is fatal — the loop unwinds, no retry.
 - The relay holds each request server-side for a random 20–30 s; the request timeout is 60 s.
 
 ### Commands
@@ -85,7 +90,7 @@ Identical to the jscript-agent's contract (spoken against the HTTP relay's root)
 |---|---|---|
 | `0x0A` | Exit | Kills the host process (and any agent injected into it). No reply. |
 | `0x0B` | UpgradeNetFramework | Replies status `2` (the deserialization upgrade is the JScript agent's — this breed is already native). |
-| `0x0C` | UpgradeNative | Payload after the opcode: `[binLen:u32le][PIC binary][NAME=value env lines]` (same env-line style as the `0x0B` headers). The PIC bytes ride the command; `W_URL` (the relay the injected WebSocket agent reads from the process env) is the only current env line. Replies u32 as hex: `0` = injected, `1` = failed / nothing to inject. |
+| `0x0C` | UpgradeNative | Payload after the opcode: `[binLen:u32le][PIC binary][NAME=value env lines]` (same env-line style as the `0x0B` headers). The PIC bytes ride the command; `W_URL` (the relay the injected WebSocket agent reads from the process env) is the only current env line. Replies `[status][corrId]`: `0` = injected, `1` = failed / nothing to inject. |
 | other | unknown | Replies u32 `2`. |
 
 ## Build
