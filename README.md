@@ -82,7 +82,7 @@ Identical to the jscript-agent's contract (spoken against the HTTP relay's root)
   a command frame is `[opcode:byte][corrId:u32le][payload]`, batched up to 32 frames / 4 MiB;
   an empty body = nothing queued (re-POST immediately). Any non-200 or transport failure
   (a redirect included — auto-follow is disabled) is fatal — the loop unwinds, no retry.
-- The relay holds each request server-side for a random 20–30 s; the request timeout is 60 s.
+- The relay holds each request server-side for a random 25–35 s; the request timeout is 60 s.
 
 ### Commands
 
