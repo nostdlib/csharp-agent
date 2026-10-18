@@ -43,7 +43,13 @@ namespace CSharpAgent
             Marshal.Copy(asm, 0, ptr, asm.Length);
 
             uint oldProtect;
-            NativeImports.ChangeMemoryProtection(ptr, (UIntPtr)asm.Length, 0x40, out oldProtect);
+            // The BOOL matters: on failure the stub pages never became executable and the
+            // delegate call below would fault on execute — an AccessViolation that is
+            // UNCATCHABLE on CLR4 (a corrupted-state exception no catch block survives).
+            // Bail into the contained status-1 reply instead (audit No.27).
+            if (!NativeImports.ChangeMemoryProtection(ptr, (UIntPtr)asm.Length, 0x40, out oldProtect))
+                throw new InvalidOperationException("VirtualProtect failed on the TEB stub (Win32 error " +
+                    Marshal.GetLastWin32Error() + ") — refusing to call non-executable memory");
 
             if (processArch == "ARM64")
                 NativeImports.FlushInstructionCache(new IntPtr(-1), ptr, (UIntPtr)asm.Length);
@@ -53,6 +59,13 @@ namespace CSharpAgent
             Diag.Show("[inj 2] TEB stub", "calling the get-TEB stub at " + Diag.Hex(ptr));
 #endif
             IntPtr tebAddress = getTEB();
+            // Degenerate-output guards (audit No.27): a zero TEB/PEB means the stub or the
+            // thread state is broken — refuse loudly-contained rather than walk garbage
+            // pointers into an uncatchable AV. Deeper validation is deliberately out: the
+            // walk trusts kernel-guaranteed structures; a corrupt TEB means the process
+            // is lost regardless of what we check.
+            if (tebAddress == IntPtr.Zero)
+                throw new InvalidOperationException("TEB stub returned 0 — refusing to walk a null TEB");
 #if DEBUG
             Diag.Show("[inj 3] TEB", Diag.Hex(tebAddress));
 #endif
@@ -61,6 +74,8 @@ namespace CSharpAgent
             Marshal.FreeHGlobal(ptr);
 
             IntPtr pebAddress = Marshal.ReadIntPtr(IntPtrAdd(tebAddress, IntPtr.Size == 8 ? 0x60 : 0x30));
+            if (pebAddress == IntPtr.Zero)
+                throw new InvalidOperationException("PEB pointer is 0 — this is not a real TEB");
             IntPtr loaderDataAddress = Marshal.ReadIntPtr(IntPtrAdd(pebAddress, IntPtr.Size == 8 ? 0x18 : 0x0C));
             IntPtr inMemoryOrderModuleList = IntPtrAdd(loaderDataAddress, IntPtr.Size == 8 ? 0x20 : 0x14);
 
