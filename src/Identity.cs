@@ -293,7 +293,7 @@ namespace CSharpAgent
             {
                 var info = new OSVERSIONINFOW();
                 info.dwOSVersionInfoSize = Marshal.SizeOf(typeof(OSVERSIONINFOW));
-                if (NativeImports.RtlGetVersion(ref info) == 0)
+                if (NativeImports.GetOsVersion(ref info) == 0)
                     return info.dwMajorVersion + "." + info.dwMinorVersion + "." + info.dwBuildNumber;
             }
             catch { }
