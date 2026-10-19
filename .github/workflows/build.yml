@@ -67,10 +67,10 @@ jobs:
                 -nologo -verbosity:minimal "-p:CustomAfterMicrosoftCommonTargets=$targets"
               if ($LASTEXITCODE -ne 0) { exit 1 }
               Copy-Item "bin\$($a[1])\Release-exe\csharp-agent.exe" "dist\csharp-agent-$($s[0])-$($a[0]).exe"
-              # DEBUG flavor: the #if DEBUG file-logger (src/Diag.cs) compiles
-              # in ONLY here — one line per lifecycle/inject step to
-              # csharp-agent-debug-<pid>.log next to the exe (or %TEMP% for the bytes-loaded
-              # 0x0B dll). The plain assets above have NO diagnostics compiled in at all.
+              # DEBUG flavor: the #if DEBUG MessageBox diagnostics (src/Diag.cs) compile
+              # in ONLY here — a blocking popup on every lifecycle/command/inject step;
+              # the LAST caption a vanished run showed marks the killer ([inj 8] = a native
+              # payload crash). The plain assets above have NO diagnostics compiled in at all.
               # Separate OutputPaths again — IncrementalClean eats prior outputs in shared dirs.
               msbuild csharp-agent.csproj `
                 -p:Configuration=Debug -p:Platform=$($a[1]) -p:TargetFrameworkVersion=$($s[1]) `
