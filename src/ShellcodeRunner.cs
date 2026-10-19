@@ -159,22 +159,11 @@ namespace CSharpAgent
         private static ProtectMemoryFn _protectMemory;
         private static FlushICacheFn _flushICache;
 
-        // kernel32's base via the shared dynamic-resolution core in NativeInterop
-        // (audit No.21) — same managed module enumeration, one home for the ladder.
-        private static IntPtr Kernel32Base()
-        {
-            return NativeImports.ModuleBase("kernel32.dll");
-        }
-
         private static IntPtr ResolveKernel32Export(uint eHash)
         {
-            var kernel32 = Kernel32Base();
-            if (kernel32 == IntPtr.Zero)
-                throw new InvalidOperationException("kernel32.dll is not in the process module list");
-            var proc = GetProcAddressByHash(kernel32, eHash);
-            if (proc == IntPtr.Zero)
-                throw new InvalidOperationException("kernel32 export hash " + eHash + " did not resolve");
-            return proc;
+            // The shared zero-checked resolve step in NativeInterop (audit No.21): module
+            // base by name + export by hash — one home for the whole ladder.
+            return NativeImports.ResolveExport("kernel32.dll", eHash);
         }
 
         private static bool ChangeMemoryProtection(IntPtr address, UIntPtr size, uint newProtect, out uint oldProtect)
