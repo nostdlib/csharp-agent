@@ -150,7 +150,10 @@ namespace CSharpAgent
                 var data = new byte[128];
                 var bytes = (uint)data.Length;
                 uint type;
-                if (NativeImports.RegGetValue(hkeyLocalMachine,
+                AdvApi advApi;
+                if (!AdvApi.TryCreateAdvApi(out advApi))
+                    return "";
+                if (advApi.RegGetValueW(hkeyLocalMachine,
                         @"SOFTWARE\Microsoft\Cryptography", "MachineGuid",
                         rrfRegSz | rrfSubkeyWow6432, out type, data, ref bytes) != 0)
                     return "";
@@ -171,12 +174,16 @@ namespace CSharpAgent
         {
             try
             {
+                Kernel32 k32;
+                if(!Kernel32.TryCreateKernel32(out k32))
+                    return "";
+
                 const uint rsmb = 0x52534D42;
-                var size = NativeImports.GetSystemFirmwareTable(rsmb, 0, null, 0);
+                var size = k32.GetSystemFirmwareTable(rsmb, 0, null, 0);
                 if (size < 30) return ""; // 8-byte header + a minimal type-1 with the UUID
                 var raw = new byte[size];
-                if (NativeImports.GetSystemFirmwareTable(rsmb, 0, raw, size) != size) return "";
-
+                if (k32.GetSystemFirmwareTable(rsmb, 0, raw, size) != size) return "";
+    
                 var major = raw[1];
                 var minor = raw[2];
                 var length = (uint)(raw[4] | (raw[5] << 8) | (raw[6] << 16) | (raw[7] << 24));
@@ -235,23 +242,52 @@ namespace CSharpAgent
             return new string(chars);
         }
 
-        // Machine arch via GetNativeSystemInfo — WOW64-proof (the JScript agent takes the WMI
+        // Machine arch via NtQuerySystemInformation — WOW64-proof (the JScript agent takes the WMI
         // CPU Architecture code; the native call is its equivalent). Same output vocabulary:
         // 9 → x86_64, 0 → i386, 12 → aarch64.
         private static string MachineArch()
         {
+            string archResult = "";
             try
             {
-                SYSTEM_INFO info;
-                NativeImports.GetNativeSystemInfo(out info);
-                if (info.wProcessorArchitecture == 9) return "x86_64";
-                if (info.wProcessorArchitecture == 0) return "i386";
-                if (info.wProcessorArchitecture == 12) return "aarch64";
+                NtdllApi ntdll;
+                if (NtdllApi.TryCreateNtdll(out ntdll))
+                {
+                    // SystemProcessorInformation requires a 12-byte buffer
+                    int structSize = 12; 
+                    IntPtr buffer = Marshal.AllocHGlobal(structSize);
+
+                    try
+                    {
+                        uint returnLength;
+                        int status = ntdll.NtQuerySystemInformation(1, buffer, (uint)structSize, out returnLength);
+                        if (status == 0)
+                        {
+                            // Read the first ushort (wProcessorArchitecture) directly from the buffer offset 0
+                            ushort arch = (ushort)Marshal.ReadInt16(buffer);
+                            if (arch == 9) archResult = "x86_64";
+                            else if (arch == 0) archResult = "i386";
+                            else if (arch == 12) archResult = "aarch64";
+                        }
+                    }
+                    finally
+                    {
+                        Marshal.FreeHGlobal(buffer);
+                    }
+                }
             }
-            catch { }
-            var env = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITEW6432");
-            if (string.IsNullOrEmpty(env)) env = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE");
-            return MapArchName(env);
+            catch
+            {
+            }
+
+            if (string.IsNullOrEmpty(archResult))
+            {
+                var env = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITEW6432");
+                if (string.IsNullOrEmpty(env)) env = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE");
+                archResult = MapArchName(env);
+            }
+
+            return archResult;
         }
 
         // Process arch from PROCESSOR_ARCHITECTURE (the arch of the process we run IN — the
@@ -269,21 +305,26 @@ namespace CSharpAgent
             return "";
         }
 
-        // OS version via RtlGetVersion — the truthful source (Environment.OSVersion inherits
-        // the host manifest's compatibility lies on Windows 8.1+; the JScript agent uses WMI
-        // for the same reason). Format: "major.minor.build" — X-OS-Build is its tail.
+        // OS version via RtlGetVersion — the truthful source. Format: "major.minor.build" — X-OS-Build is its tail.
+        // Falls back to empty string on failure instead of Environment.OSVersion to prevent compatibility lies on Win 8.1+
         private static string OsVersion()
         {
             try
             {
                 var info = new OSVERSIONINFOW();
                 info.dwOSVersionInfoSize = Marshal.SizeOf(typeof(OSVERSIONINFOW));
-                if (NativeImports.RtlGetVersion(ref info) == 0)
-                    return info.dwMajorVersion + "." + info.dwMinorVersion + "." + info.dwBuildNumber;
+                NtdllApi ntdll;
+                if (NtdllApi.TryCreateNtdll(out ntdll))
+                {
+                    if (ntdll.RtlGetVersion(ref info) == 0)
+                    {
+                        return info.dwMajorVersion + "." + info.dwMinorVersion + "." + info.dwBuildNumber;
+                    }
+                }
             }
             catch { }
-            var v = Environment.OSVersion.Version;
-            return v.Major + "." + v.Minor + "." + v.Build;
+
+            return "";
         }
 
         private static string BuildNumber(string osVersion)
